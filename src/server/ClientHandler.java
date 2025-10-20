@@ -5,16 +5,19 @@ import java.net.Socket;
 
 public class ClientHandler extends Thread {
 
-    private final Socket socket;              // ← final
-    private final UserManager userManager;    // ← final
+    private final Socket socket;
+    private final UserManager userManager;
+    private final Server server;
     private DataInputStream input;
     private DataOutputStream output;
     private String username;
+    private volatile boolean readyForChat = false;  // ← NEU: Chat-Status
 
 
-    public ClientHandler(Socket socket, UserManager userManager) {
+    public ClientHandler(Socket socket, UserManager userManager, Server server) {
         this.socket = socket;
         this.userManager = userManager;
+        this.server = server;
     }
 
 
@@ -29,11 +32,20 @@ public class ClientHandler extends Thread {
             // Authentifizierung
             username = authenticate();
 
-            // ← Fix: Diese Prüfung ist tatsächlich unnötig, weil authenticate()
-            //    entweder einen String zurückgibt oder eine Exception wirft
-            // Wir behalten sie aber zur Sicherheit (oder entfernen sie)
-
             System.out.println("✓ User '" + username + "' eingeloggt");
+
+            // Warte auf READY-Signal vom Client
+            String readySignal = input.readUTF();
+            if (readySignal.equals("READY")) {
+                System.out.println("✓ Client '" + username + "' ist bereit für Chat");
+
+                // Markiere Client als bereit für Chat-Nachrichten
+                readyForChat = true;
+
+                // Jetzt erst Userliste senden und Broadcast
+                sendUserList();
+                server.broadcast(">>> " + username + " hat den Chat betreten", this);
+            }
 
             // Chat-Loop
             chatLoop();
@@ -62,7 +74,7 @@ public class ClientHandler extends Thread {
             } else if (command.equals("LOGIN")) {
                 String loginResult = handleLogin(parts);
                 if (loginResult != null) {
-                    return loginResult;  // ← Login erfolgreich
+                    return loginResult;
                 }
 
             } else {
@@ -114,15 +126,22 @@ public class ClientHandler extends Thread {
     }
 
 
+    private void sendUserList() throws IOException {
+        var usernames = server.getConnectedUsernames();
+        String userList = ">>> Angemeldete User: " + String.join(", ", usernames);
+        sendMessage(userList);
+    }
+
+
     private void chatLoop() throws IOException {
         while (true) {
             try {
                 String message = input.readUTF();
                 System.out.println("← " + username + ": " + message);
 
-                String response = "[Echo] " + message;
-                output.writeUTF(response);
-                output.flush();
+                // Broadcast an alle Clients
+                String formattedMessage = "[" + username + "] " + message;
+                server.broadcast(formattedMessage, this);
 
             } catch (EOFException e) {
                 System.out.println("✓ " + username + " hat sich abgemeldet");
@@ -138,11 +157,38 @@ public class ClientHandler extends Thread {
     }
 
 
+    /**
+     * Sendet eine Nachricht an diesen Client (wird vom Server aufgerufen)
+     * Nur wenn Client im Chat-Modus ist!
+     */
+    public void sendMessage(String message) throws IOException {
+        if (readyForChat) {  // ← Nur senden, wenn bereit
+            output.writeUTF(message);
+            output.flush();
+        }
+    }
+
+
+    /**
+     * Prüft, ob dieser Client bereit für Chat-Nachrichten ist
+     */
+    public boolean isReadyForChat() {
+        return readyForChat;
+    }
+
+
     private void close() {
         try {
+            // Benachrichtige andere Clients
+            if (username != null) {
+                server.broadcast("<<< " + username + " hat den Chat verlassen", this);
+                server.removeClient(this);
+            }
+
             if (input != null) input.close();
             if (output != null) output.close();
             if (socket != null) socket.close();
+
             System.out.println("✓ ClientHandler geschlossen: " + username);
         } catch (IOException e) {
             System.err.println("✗ Fehler beim Schließen: " + e.getMessage());
@@ -150,7 +196,6 @@ public class ClientHandler extends Thread {
     }
 
 
-    // ← Methode wird später für Broadcast gebraucht!
     public String getUsername() {
         return username;
     }

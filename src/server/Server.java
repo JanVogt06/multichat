@@ -11,8 +11,8 @@ public class Server {
     private static final int PORT = 3143;
     private ServerSocket serverSocket;
     private boolean running;
-    private final UserManager userManager;           // ← final
-    private final List<ClientHandler> clients;       // ← final (Liste wird später für Broadcast gebraucht)
+    private final UserManager userManager;
+    private final List<ClientHandler> clients;
 
 
     public Server() {
@@ -37,8 +37,8 @@ public class Server {
                 Socket clientSocket = serverSocket.accept();
 
                 // Neuen ClientHandler-Thread starten
-                ClientHandler handler = new ClientHandler(clientSocket, userManager);
-                clients.add(handler);  // ← Wird später für Broadcast verwendet!
+                ClientHandler handler = new ClientHandler(clientSocket, userManager, this);
+                clients.add(handler);
                 handler.start();
             }
 
@@ -48,7 +48,68 @@ public class Server {
     }
 
 
-    // Methode wird später für sauberes Herunterfahren gebraucht
+    /**
+     * Sendet eine Nachricht an alle angemeldeten Clients (außer Sender)
+     * Nur an Clients, die im Chat-Modus sind!
+     */
+    public synchronized void broadcast(String message, ClientHandler sender) {
+        System.out.println("📢 Broadcast: " + message);
+
+        List<ClientHandler> disconnectedClients = new ArrayList<>();
+
+        for (ClientHandler client : clients) {
+            // Nachricht NICHT an Sender zurückschicken
+            if (client == sender) continue;
+
+            // Nur an Clients senden, die bereit für Chat sind
+            if (!client.isReadyForChat()) continue;
+
+            try {
+                client.sendMessage(message);
+            } catch (IOException e) {
+                System.err.println("✗ Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
+                disconnectedClients.add(client);
+            }
+        }
+
+        // Entferne disconnected Clients
+        clients.removeAll(disconnectedClients);
+    }
+
+
+    /**
+     * Entfernt einen Client aus der Liste
+     */
+    public synchronized void removeClient(ClientHandler client) {
+        clients.remove(client);
+        System.out.println("✓ Client entfernt: " + client.getUsername() + " (Gesamt: " + clients.size() + ")");
+    }
+
+
+    /**
+     * Gibt die Namen aller angemeldeten User zurück (die im Chat-Modus sind)
+     */
+    public synchronized List<String> getConnectedUsernames() {
+        List<String> usernames = new ArrayList<>();
+        for (ClientHandler client : clients) {
+            String username = client.getUsername();
+            // Nur authentifizierte Clients, die im Chat-Modus sind
+            if (username != null && client.isReadyForChat()) {
+                usernames.add(username);
+            }
+        }
+        return usernames;
+    }
+
+
+    /**
+     * Gibt die Anzahl der verbundenen Clients zurück
+     */
+    public synchronized int getClientCount() {
+        return clients.size();
+    }
+
+
     public void stop() {
         try {
             running = false;
