@@ -2,303 +2,296 @@ package server;
 
 import java.io.*;
 import java.net.Socket;
+import java.util.List;
 
 /**
- * Diese Klasse verwaltet die Kommunikation mit einem einzelnen Client.
- * Jeder ClientHandler läuft in einem eigenen Thread und ist für die
- * Authentifizierung, Chat-Kommunikation und Verwaltung eines Clients zuständig.
+ * Verwalten der Kommunikation mit einem einzelnen Client.
+ * Unterstützt jetzt Räume (Mehrraum-System) und bietet eine public
+ * requestClose()-Methode, die von Admin-Operationen (Kick) genutzt wird.
  */
 public class ClientHandler extends Thread {
 
-    // Socket-Verbindung zum Client
     private final Socket socket;
-
-    // Referenz zum UserManager für Benutzerverwaltung
     private final UserManager userManager;
-
-    // Referenz zum Server für Broadcasting
     private final Server server;
-
-    // Eingabestrom vom Client
     private DataInputStream input;
-
-    // Ausgabestrom zum Client
     private DataOutputStream output;
-
-    // Benutzername des angemeldeten Clients
     private String username;
-
-    // Flag, das angibt, ob der Client bereit für Chat-Nachrichten ist
-    // volatile sorgt für Thread-Sicherheit bei Lese-/Schreibzugriffen
     private volatile boolean readyForChat = false;
 
+    // Aktueller Raum des Clients
+    private String currentRoom;
 
-    /**
-     * Konstruktor für einen neuen ClientHandler.
-     *
-     * @param socket Socket-Verbindung zum Client
-     * @param userManager UserManager für Benutzerverwaltung
-     * @param server Server-Instanz für Broadcasting
-     */
+    // Lauf-Flag: wenn false soll die Hauptschleife sauber enden
+    private volatile boolean running = true;
+
     public ClientHandler(Socket socket, UserManager userManager, Server server) {
         this.socket = socket;
         this.userManager = userManager;
         this.server = server;
+        this.currentRoom = null;
     }
 
-
-    /**
-     * Hauptmethode des Threads. Wird beim Start des Threads ausgeführt.
-     * Steuert den gesamten Ablauf: Verbindung, Authentifizierung, Chat-Loop.
-     */
     @Override
     public void run() {
         try {
-            // Eingabe- und Ausgabeströme initialisieren
             input = new DataInputStream(socket.getInputStream());
             output = new DataOutputStream(socket.getOutputStream());
 
-            System.out.println("Neuer Client verbunden: " + socket.getInetAddress());
+            server.log("Neuer Client verbunden: " + socket.getInetAddress());
 
-            // Authentifizierungsprozess durchführen (Login oder Registrierung)
             username = authenticate();
+            server.log("User '" + username + "' eingeloggt");
 
-            System.out.println("User '" + username + "' eingeloggt");
-
-            // Warte auf READY-Signal vom Client, bevor Chat-Nachrichten gesendet werden
+            // Warte auf READY-Signal vom Client
             String readySignal = input.readUTF();
-            if (readySignal.equals("READY")) {
-                System.out.println("Client '" + username + "' ist bereit für Chat");
-
-                // Client ist nun bereit, Chat-Nachrichten zu empfangen
+            if ("READY".equals(readySignal)) {
+                server.log("Client '" + username + "' ist bereit für Chat");
                 readyForChat = true;
 
-                // Aktuelle Liste aller angemeldeten Benutzer senden
+                // automatisch in DEFAULT_ROOM einreihen
+                currentRoom = Server.DEFAULT_ROOM;
+                server.joinRoom(currentRoom, this);
+
+                // sende Raumliste und Userliste
+                sendRoomList();
                 sendUserList();
 
-                // Alle anderen Clients über neuen Benutzer informieren
-                server.broadcast(">>> " + username + " hat den Chat betreten", this);
+                // andere im Raum informieren
+                server.broadcastToRoom(">>> " + username + " hat den Raum betreten: " + currentRoom, currentRoom, this);
             }
 
-            // Hauptschleife für Chat-Kommunikation
+            // Hauptloop: läuft solange running == true
             chatLoop();
 
         } catch (IOException e) {
-            System.err.println("Fehler bei Client " + username + ": " + e.getMessage());
+            // Wenn running noch true war, ist es ein unerwarteter Fehler
+            if (running) {
+                server.log("Fehler bei Client " + username + ": " + e.getMessage());
+            } else {
+                // normaler Abbruch durch requestClose()
+                server.log("Verbindung von " + username + " wurde geschlossen (requestClose).");
+            }
         } finally {
-            // Ressourcen freigeben und Client abmelden
             close();
         }
     }
 
-
-    /**
-     * Authentifizierungsprozess für den Client.
-     * Wartet auf LOGIN oder REGISTER Befehle vom Client.
-     *
-     * @return Benutzername nach erfolgreicher Anmeldung
-     * @throws IOException bei Kommunikationsfehlern
-     */
     private String authenticate() throws IOException {
-        System.out.println("Warte auf Authentifizierung...");
+        server.log("Warte auf Authentifizierung...");
 
-        while (true) {
-            // Nachricht vom Client lesen (Format: BEFEHL:username:password)
+        while (running) {
             String message = input.readUTF();
-            System.out.println("Empfangen: " + message);
-
-            // Nachricht in Teile aufteilen
+            server.log("Empfangen: " + message);
             String[] parts = message.split(":", 3);
             String command = parts[0];
 
-            // Je nach Befehl entsprechende Aktion ausführen
-            if (command.equals("REGISTER")) {
+            if ("REGISTER".equals(command)) {
                 handleRegister(parts);
-
-            } else if (command.equals("LOGIN")) {
-                // Bei erfolgreichem Login wird der Username zurückgegeben
+            } else if ("LOGIN".equals(command)) {
                 String loginResult = handleLogin(parts);
-                if (loginResult != null) {
-                    return loginResult;
-                }
-
+                if (loginResult != null) return loginResult;
             } else {
-                // Unbekannter Befehl
                 sendResponse("ERROR", "Unbekannter Befehl");
             }
         }
+        // wenn running false geworden ist: Abbruch
+        throw new IOException("Authentifizierung abgebrochen");
     }
 
-
-    /**
-     * Verarbeitet eine Registrierungsanfrage.
-     *
-     * @param parts Array mit [REGISTER, username, password]
-     * @throws IOException bei Kommunikationsfehlern
-     */
     private void handleRegister(String[] parts) throws IOException {
-        // Überprüfe, ob die Nachricht das richtige Format hat
         if (parts.length != 3) {
             sendResponse("ERROR", "Ungültiges Format");
             return;
         }
-
         String user = parts[1];
         String pass = parts[2];
-
-        // Versuche Benutzer zu registrieren
         if (userManager.registerUser(user, pass)) {
             sendResponse("SUCCESS", "Registrierung erfolgreich");
-            System.out.println("Neuer User: " + user);
+            server.log("Neuer User: " + user);
         } else {
             sendResponse("ERROR", "Username bereits vergeben");
         }
     }
 
-
-    /**
-     * Verarbeitet eine Login-Anfrage.
-     *
-     * @param parts Array mit [LOGIN, username, password]
-     * @return Username bei erfolgreichem Login, sonst null
-     * @throws IOException bei Kommunikationsfehlern
-     */
     private String handleLogin(String[] parts) throws IOException {
-        // Überprüfe, ob die Nachricht das richtige Format hat
         if (parts.length != 3) {
             sendResponse("ERROR", "Ungültiges Format");
             return null;
         }
-
         String user = parts[1];
         String pass = parts[2];
 
-        // Überprüfe, ob Benutzer existiert
+        // Falls gebannt: Ablehnen
+        if (userManager.isBanned(user)) {
+            sendResponse("ERROR", "User ist gebannt");
+            return null;
+        }
+
         if (!userManager.userExists(user)) {
             sendResponse("ERROR", "Username nicht gefunden");
             return null;
         }
-
-        // Überprüfe Passwort
         if (!userManager.validatePassword(user, pass)) {
             sendResponse("ERROR", "Falsches Passwort");
             return null;
         }
-
-        // Login erfolgreich
         sendResponse("SUCCESS", "Login erfolgreich");
         return user;
     }
 
-
-    /**
-     * Sendet die Liste aller angemeldeten Benutzer an diesen Client.
-     *
-     * @throws IOException bei Kommunikationsfehlern
-     */
     private void sendUserList() throws IOException {
-        var usernames = server.getConnectedUsernames();
-        String userList = ">>> Angemeldete User: " + String.join(", ", usernames);
-        sendMessage(userList);
+        StringBuilder sb = new StringBuilder();
+        sb.append(">>> Angemeldete User: ");
+        List<String> usernames = server.getConnectedUsernames();
+        boolean first = true;
+        for (String u : usernames) {
+            if (!first) sb.append(", ");
+            // Wenn möglich, Raum für den User ermitteln (vereinfachte Darstellung)
+            String room = findRoomForUser(u);
+            sb.append(u).append("(").append(room != null ? room : "?").append(")");
+            first = false;
+        }
+        sendMessage(sb.toString());
     }
 
+    // Vereinfachte Methode: versucht die Raumzugehörigkeit für bekannten User zu ermitteln.
+    private String findRoomForUser(String username) {
+        // Wenn es der eigene Username ist, gib currentRoom zurück
+        if (this.username != null && this.username.equals(username)) return currentRoom;
+        // Ansonsten keine sichere Info hier (Server müsste API liefern). Rückgabe null möglich.
+        return null;
+    }
 
-    /**
-     * Hauptschleife für den Chat-Betrieb.
-     * Empfängt Nachrichten vom Client und broadcastet sie an alle anderen.
-     *
-     * @throws IOException bei Kommunikationsfehlern
-     */
+    private void sendRoomList() throws IOException {
+        List<String> rooms = server.getRoomList();
+        String roomList = "ROOMLIST:" + String.join(",", rooms);
+        sendMessage(roomList);
+    }
+
     private void chatLoop() throws IOException {
-        while (true) {
+        while (running) {
             try {
-                // Nachricht vom Client lesen
                 String message = input.readUTF();
-                System.out.println(username + ": " + message);
+                server.log(username + ": " + message);
 
-                // Nachricht formatieren mit Absender
-                String formattedMessage = "[" + username + "] " + message;
+                // Kommandos für Raumverwaltung oder normale Nachrichten
+                if (message.startsWith("CREATE_ROOM:")) {
+                    String roomName = message.substring("CREATE_ROOM:".length());
+                    boolean created = server.createRoom(roomName);
+                    sendMessage(created ? "SUCCESS:Raum " + roomName + " erstellt" : "ERROR:Raum existiert bereits");
+                    broadcastRoomListUpdate();
+                    continue;
+                }
 
-                // An alle anderen Clients senden
-                server.broadcast(formattedMessage, this);
+                if (message.startsWith("DELETE_ROOM:")) {
+                    String roomName = message.substring("DELETE_ROOM:".length());
+                    boolean deleted = server.deleteRoom(roomName);
+                    sendMessage(deleted ? "SUCCESS:Raum " + roomName + " gelöscht" : "ERROR:Raum konnte nicht gelöscht werden (evtl. nicht leer oder Default)");
+                    broadcastRoomListUpdate();
+                    continue;
+                }
+
+                if (message.startsWith("JOIN:")) {
+                    String roomName = message.substring("JOIN:".length());
+                    if (!server.joinRoom(roomName, this)) {
+                        sendMessage("ERROR:Raum nicht gefunden");
+                    } else {
+                        if (currentRoom != null) {
+                            server.leaveRoom(currentRoom, this);
+                            server.broadcastToRoom("<<< " + username + " hat den Raum verlassen: " + currentRoom, currentRoom, this);
+                        }
+                        currentRoom = roomName;
+                        sendMessage("SUCCESS:Beigetreten " + roomName);
+                        server.broadcastToRoom(">>> " + username + " hat den Raum betreten: " + roomName, roomName, this);
+                        sendRoomList();
+                        sendUserList();
+                    }
+                    continue;
+                }
+
+                if ("LEAVE".equals(message)) {
+                    if (currentRoom != null) {
+                        server.leaveRoom(currentRoom, this);
+                        server.broadcastToRoom("<<< " + username + " hat den Raum verlassen: " + currentRoom, currentRoom, this);
+                    }
+                    currentRoom = Server.DEFAULT_ROOM;
+                    server.joinRoom(currentRoom, this);
+                    sendMessage("SUCCESS:Zurück in " + currentRoom);
+                    server.broadcastToRoom(">>> " + username + " hat den Raum betreten: " + currentRoom, currentRoom, this);
+                    continue;
+                }
+
+                // Normale Nachricht -> an aktuellen Raum senden
+                String formatted = "[" + username + "] " + message;
+                server.broadcastToRoom(formatted, currentRoom, this);
 
             } catch (EOFException e) {
-                // Client hat Verbindung beendet (normal)
-                System.out.println(username + " hat sich abgemeldet");
+                server.log(username + " hat sich abgemeldet");
                 break;
             }
         }
     }
 
+    private void broadcastRoomListUpdate() {
+        // Sende aktualisierte Raumliste an alle verbundenen Clients (einfacher Ansatz)
+        List<ClientHandler> clients = server.getAllClientHandlers(); // wir werden diese Methode im Server bereitstellen
+        for (ClientHandler ch : clients) {
+            try {
+                ch.sendRoomList();
+            } catch (IOException ignored) { }
+        }
+    }
 
-    /**
-     * Sendet eine Antwort an den Client (während Authentifizierung).
-     *
-     * @param status Status der Operation (SUCCESS oder ERROR)
-     * @param message Beschreibung/Nachricht
-     * @throws IOException bei Kommunikationsfehlern
-     */
     private void sendResponse(String status, String message) throws IOException {
         output.writeUTF(status + ":" + message);
         output.flush();
     }
 
-
-    /**
-     * Sendet eine Chat-Nachricht an diesen Client.
-     * Wird vom Server aufgerufen. Nachricht wird nur gesendet,
-     * wenn der Client im Chat-Modus ist.
-     *
-     * @param message Die zu sendende Nachricht
-     * @throws IOException bei Kommunikationsfehlern
-     */
     public void sendMessage(String message) throws IOException {
-        if (readyForChat) {
+        if (readyForChat && running) {
             output.writeUTF(message);
             output.flush();
         }
     }
 
-
-    /**
-     * Prüft, ob dieser Client bereit für Chat-Nachrichten ist.
-     *
-     * @return true wenn bereit, sonst false
-     */
     public boolean isReadyForChat() {
         return readyForChat;
     }
 
-
     /**
-     * Schließt die Verbindung und gibt alle Ressourcen frei.
-     * Benachrichtigt andere Clients über das Verlassen.
+     * Public method to request a clean close of this handler from outside
+     * (e.g. Admin Kick). It attempts to stop the main loop and close socket/streams.
      */
+    public void requestClose() {
+        running = false;
+        // Closing the socket/inputstream will interrupt blocking readUTF()
+        try {
+            if (socket != null && !socket.isClosed()) socket.close();
+        } catch (IOException ignored) { }
+    }
+
     private void close() {
         try {
-            // Andere Clients benachrichtigen, falls Client angemeldet war
             if (username != null) {
-                server.broadcast("<<< " + username + " hat den Chat verlassen", this);
+                // Benachrichtige Raum
+                if (currentRoom != null) {
+                    server.broadcastToRoom("<<< " + username + " hat den Raum verlassen", currentRoom, this);
+                    server.leaveRoom(currentRoom, this);
+                }
                 server.removeClient(this);
             }
 
-            // Streams und Socket schließen
-            if (input != null) input.close();
-            if (output != null) output.close();
-            if (socket != null) socket.close();
+            if (input != null) try { input.close(); } catch (IOException ignored) {}
+            if (output != null) try { output.close(); } catch (IOException ignored) {}
+            if (socket != null && !socket.isClosed()) try { socket.close(); } catch (IOException ignored) {}
 
-            System.out.println("ClientHandler geschlossen: " + username);
-        } catch (IOException e) {
-            System.err.println("Fehler beim Schließen: " + e.getMessage());
+            server.log("ClientHandler geschlossen: " + username);
+        } catch (Exception e) {
+            server.log("Fehler beim Schließen: " + e.getMessage());
         }
     }
 
-
-    /**
-     * Gibt den Benutzernamen dieses Clients zurück.
-     *
-     * @return Benutzername oder null wenn nicht angemeldet
-     */
     public String getUsername() {
         return username;
     }
