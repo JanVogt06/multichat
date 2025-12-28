@@ -1,8 +1,10 @@
 package server;
 
-import java.io.IOException;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,6 +18,9 @@ public class Server {
     // Port auf dem der Server lauscht
     private static final int PORT = 3143;
 
+    // Pfad zur Log-Datei
+    private static final String LOG_FILE = "server.log";
+
     // ServerSocket für eingehende Verbindungen
     private ServerSocket serverSocket;
 
@@ -28,15 +33,21 @@ public class Server {
     // Liste aller verbundenen Clients
     private final List<ClientHandler> clients;
 
-    // Referenz zur GUI
+    // Referenz zur GUI (kann null sein für Konsolen-Betrieb)
     private ServerGUI gui;
 
     // Verwaltung der Räume
     private RoomManager roomManager;
 
+    // Writer für die Log-Datei
+    private PrintWriter logWriter;
+
+    // Formatter für Zeitstempel im Log
+    private final DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
 
     /**
-     * Konstruktor fuer den Server.
+     * Konstruktor für den Server.
      * Initialisiert UserManager und Client-Liste.
      */
     public Server() {
@@ -70,21 +81,64 @@ public class Server {
 
 
     /**
-     * Gibt eine Nachricht aus - entweder an GUI oder Konsole.
-     *
-     * @param message Die Nachricht
+     * Initialisiert die Log-Datei.
+     * Erstellt eine neue Datei oder hängt an bestehende an.
      */
-    public void log(String message) {
-        if (gui != null) {
-            gui.log(message);
-        } else {
-            System.out.println(message);
+    private void initLogFile() {
+        try {
+            // FileWriter mit append=true um an bestehende Datei anzuhängen
+            logWriter = new PrintWriter(new FileWriter(LOG_FILE, true), true);
+            logWriter.println();
+            logWriter.println("=".repeat(60));
+            logWriter.println("Server-Session gestartet: " + LocalDateTime.now().format(timeFormatter));
+            logWriter.println("=".repeat(60));
+        } catch (IOException e) {
+            System.err.println("Fehler beim Erstellen der Log-Datei: " + e.getMessage());
         }
     }
 
 
     /**
-     * Informiert die GUI ueber einen neuen Nutzer.
+     * Schließt die Log-Datei.
+     */
+    private void closeLogFile() {
+        if (logWriter != null) {
+            logWriter.println("=".repeat(60));
+            logWriter.println("Server-Session beendet: " + LocalDateTime.now().format(timeFormatter));
+            logWriter.println("=".repeat(60));
+            logWriter.close();
+            logWriter = null;
+        }
+    }
+
+
+    /**
+     * Gibt eine Nachricht aus - an GUI, Konsole und Log-Datei.
+     *
+     * @param message Die Nachricht
+     */
+    public void log(String message) {
+        // Zeitstempel erstellen
+        String timestamp = LocalDateTime.now().format(timeFormatter);
+        String logMessage = "[" + timestamp + "] " + message;
+
+        // An GUI ausgeben (ohne Zeitstempel, da übersichtlicher)
+        if (gui != null) {
+            gui.log(message);
+        } else {
+            // Konsolen-Ausgabe mit Zeitstempel
+            System.out.println(logMessage);
+        }
+
+        // In Log-Datei schreiben
+        if (logWriter != null) {
+            logWriter.println(logMessage);
+        }
+    }
+
+
+    /**
+     * Informiert die GUI über einen neuen Nutzer.
      *
      * @param username Der Nutzername
      */
@@ -96,7 +150,7 @@ public class Server {
 
 
     /**
-     * Informiert die GUI ueber einen abgemeldeten Nutzer.
+     * Informiert die GUI über einen abgemeldeten Nutzer.
      *
      * @param username Der Nutzername
      */
@@ -108,7 +162,7 @@ public class Server {
 
 
     /**
-     * Informiert die GUI ueber einen neuen Raum.
+     * Informiert die GUI über einen neuen Raum.
      *
      * @param roomName Der Raumname
      */
@@ -120,7 +174,7 @@ public class Server {
 
 
     /**
-     * Informiert die GUI ueber einen geloeschten Raum.
+     * Informiert die GUI über einen gelöschten Raum.
      *
      * @param roomName Der Raumname
      */
@@ -132,7 +186,7 @@ public class Server {
 
 
     /**
-     * Gibt den RoomManager zurueck.
+     * Gibt den RoomManager zurück.
      *
      * @return Der RoomManager
      */
@@ -143,11 +197,14 @@ public class Server {
 
     /**
      * Startet den Server und wartet auf eingehende Client-Verbindungen.
-     * für jeden neuen Client wird ein eigener ClientHandler-Thread erstellt.
+     * Für jeden neuen Client wird ein eigener ClientHandler-Thread erstellt.
      */
     public void start() {
         try {
-            // ServerSocket auf dem definierten Port oeffnen
+            // Log-Datei initialisieren
+            initLogFile();
+
+            // ServerSocket auf dem definierten Port öffnen
             serverSocket = new ServerSocket(PORT);
             running = true;
 
@@ -155,6 +212,7 @@ public class Server {
             log("=".repeat(50));
             log("Chat-Server gestartet");
             log("Port: " + PORT);
+            log("Log-Datei: " + LOG_FILE);
             log("Registrierte User: " + userManager.getUserCount());
             log("=".repeat(50));
 
@@ -167,7 +225,7 @@ public class Server {
                     // Neuen ClientHandler für diesen Client erstellen
                     ClientHandler handler = new ClientHandler(clientSocket, userManager, this);
 
-                    // Handler zur Liste hinzufuegen
+                    // Handler zur Liste hinzufügen
                     synchronized (clients) {
                         clients.add(handler);
                     }
@@ -192,7 +250,7 @@ public class Server {
 
 
     /**
-     * Sendet eine Nachricht an alle angemeldeten Clients (ausser dem Sender).
+     * Sendet eine Nachricht an alle angemeldeten Clients (außer dem Sender).
      * Nur Clients, die im Chat-Modus sind, erhalten die Nachricht.
      *
      * @param message Die zu sendende Nachricht
@@ -207,7 +265,7 @@ public class Server {
         // Durchlaufe alle verbundenen Clients
         synchronized (clients) {
             for (ClientHandler client : clients) {
-                // Nachricht nicht an den Sender zurueckschicken
+                // Nachricht nicht an den Sender zurückschicken
                 if (client == sender) continue;
 
                 // Nur an Clients senden, die bereit für Chat sind
@@ -217,7 +275,7 @@ public class Server {
                     // Nachricht an Client senden
                     client.sendMessage(message);
                 } catch (IOException e) {
-                    // Verbindung fehlgeschlagen, Client zur Loeschliste hinzufuegen
+                    // Verbindung fehlgeschlagen, Client zur Löschliste hinzufügen
                     log("Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
                     disconnectedClients.add(client);
                 }
@@ -249,7 +307,7 @@ public class Server {
                     // Nachricht an Client senden
                     client.sendMessage(message);
                 } catch (IOException e) {
-                    // Verbindung fehlgeschlagen, Client zur Loeschliste hinzufuegen
+                    // Verbindung fehlgeschlagen, Client zur Löschliste hinzufügen
                     log("Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
                     disconnectedClients.add(client);
                 }
@@ -303,8 +361,8 @@ public class Server {
 
 
     /**
-     * Gibt die Namen aller angemeldeten Benutzer zurueck.
-     * Nur Clients, die im Chat-Modus sind, werden beruecksichtigt.
+     * Gibt die Namen aller angemeldeten Benutzer zurück.
+     * Nur Clients, die im Chat-Modus sind, werden berücksichtigt.
      *
      * @return Liste mit allen Benutzernamen
      */
@@ -327,7 +385,7 @@ public class Server {
 
 
     /**
-     * Gibt die Anzahl der verbundenen Clients zurueck.
+     * Gibt die Anzahl der verbundenen Clients zurück.
      *
      * @return Anzahl der Clients
      */
@@ -339,9 +397,9 @@ public class Server {
 
 
     /**
-     * Prueft ob der Server laeuft.
+     * Prüft ob der Server läuft.
      *
-     * @return true wenn Server laeuft
+     * @return true wenn Server läuft
      */
     public boolean isRunning() {
         return running;
@@ -349,7 +407,7 @@ public class Server {
 
 
     /**
-     * Stoppt den Server und schliesst den ServerSocket.
+     * Stoppt den Server und schließt den ServerSocket.
      */
     public void stop() {
         try {
@@ -367,12 +425,15 @@ public class Server {
                 clients.clear();
             }
 
-            // ServerSocket schliessen
+            // ServerSocket schließen
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
 
             log("Server gestoppt");
+
+            // Log-Datei schließen
+            closeLogFile();
 
             // GUI leeren
             if (gui != null) {
