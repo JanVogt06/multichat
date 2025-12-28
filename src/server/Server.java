@@ -20,7 +20,7 @@ public class Server {
     private ServerSocket serverSocket;
 
     // Flag für Server-Status
-    private boolean running;
+    private volatile boolean running;
 
     // Verwaltung der Benutzerkonten
     private final UserManager userManager;
@@ -28,89 +28,236 @@ public class Server {
     // Liste aller verbundenen Clients
     private final List<ClientHandler> clients;
 
+    // Referenz zur GUI
+    private ServerGUI gui;
+
+    // Verwaltung der Räume
+    private RoomManager roomManager;
+
 
     /**
-     * Konstruktor für den Server.
+     * Konstruktor fuer den Server.
      * Initialisiert UserManager und Client-Liste.
      */
     public Server() {
         this.running = false;
         this.userManager = new UserManager();
         this.clients = new ArrayList<>();
+        this.gui = null;
+        this.roomManager = new RoomManager(this);
     }
 
 
     /**
-     * Startet den Server und wartet auf eingehende Client-Verbindungen.
-     * Für jeden neuen Client wird ein eigener ClientHandler-Thread erstellt.
+     * Konstruktor mit GUI-Referenz.
+     *
+     * @param gui Die ServerGUI-Instanz
      */
-    public void start() {
-        try {
-            // ServerSocket auf dem definierten Port öffnen
-            serverSocket = new ServerSocket(PORT);
-            running = true;
+    public Server(ServerGUI gui) {
+        this();
+        this.gui = gui;
+    }
 
-            // Startmeldung ausgeben
-            System.out.println("=".repeat(50));
-            System.out.println("Chat-Server gestartet");
-            System.out.println("Port: " + PORT);
-            System.out.println("Registrierte User: " + userManager.getUserCount());
-            System.out.println("=".repeat(50) + "\n");
 
-            // Endlosschleife: Warte auf neue Client-Verbindungen
-            while (running) {
-                // Blockiert bis ein Client sich verbindet
-                Socket clientSocket = serverSocket.accept();
+    /**
+     * Setzt die GUI-Referenz.
+     *
+     * @param gui Die ServerGUI-Instanz
+     */
+    public void setGUI(ServerGUI gui) {
+        this.gui = gui;
+    }
 
-                // Neuen ClientHandler für diesen Client erstellen
-                ClientHandler handler = new ClientHandler(clientSocket, userManager, this);
 
-                // Handler zur Liste hinzufügen
-                clients.add(handler);
-
-                // Handler-Thread starten
-                handler.start();
-            }
-
-        } catch (IOException e) {
-            System.err.println("Server-Fehler: " + e.getMessage());
+    /**
+     * Gibt eine Nachricht aus - entweder an GUI oder Konsole.
+     *
+     * @param message Die Nachricht
+     */
+    public void log(String message) {
+        if (gui != null) {
+            gui.log(message);
+        } else {
+            System.out.println(message);
         }
     }
 
 
     /**
-     * Sendet eine Nachricht an alle angemeldeten Clients (außer dem Sender).
+     * Informiert die GUI ueber einen neuen Nutzer.
+     *
+     * @param username Der Nutzername
+     */
+    public void notifyUserJoined(String username) {
+        if (gui != null) {
+            gui.addUser(username);
+        }
+    }
+
+
+    /**
+     * Informiert die GUI ueber einen abgemeldeten Nutzer.
+     *
+     * @param username Der Nutzername
+     */
+    public void notifyUserLeft(String username) {
+        if (gui != null) {
+            gui.removeUser(username);
+        }
+    }
+
+
+    /**
+     * Informiert die GUI ueber einen neuen Raum.
+     *
+     * @param roomName Der Raumname
+     */
+    public void notifyRoomCreated(String roomName) {
+        if (gui != null) {
+            gui.addRoom(roomName);
+        }
+    }
+
+
+    /**
+     * Informiert die GUI ueber einen geloeschten Raum.
+     *
+     * @param roomName Der Raumname
+     */
+    public void notifyRoomDeleted(String roomName) {
+        if (gui != null) {
+            gui.removeRoom(roomName);
+        }
+    }
+
+
+    /**
+     * Gibt den RoomManager zurueck.
+     *
+     * @return Der RoomManager
+     */
+    public RoomManager getRoomManager() {
+        return roomManager;
+    }
+
+
+    /**
+     * Startet den Server und wartet auf eingehende Client-Verbindungen.
+     * für jeden neuen Client wird ein eigener ClientHandler-Thread erstellt.
+     */
+    public void start() {
+        try {
+            // ServerSocket auf dem definierten Port oeffnen
+            serverSocket = new ServerSocket(PORT);
+            running = true;
+
+            // Startmeldung ausgeben
+            log("=".repeat(50));
+            log("Chat-Server gestartet");
+            log("Port: " + PORT);
+            log("Registrierte User: " + userManager.getUserCount());
+            log("=".repeat(50));
+
+            // Endlosschleife: Warte auf neue Client-Verbindungen
+            while (running) {
+                try {
+                    // Blockiert bis ein Client sich verbindet
+                    Socket clientSocket = serverSocket.accept();
+
+                    // Neuen ClientHandler für diesen Client erstellen
+                    ClientHandler handler = new ClientHandler(clientSocket, userManager, this);
+
+                    // Handler zur Liste hinzufuegen
+                    synchronized (clients) {
+                        clients.add(handler);
+                    }
+
+                    // Handler-Thread starten
+                    handler.start();
+
+                    log("Neuer Client verbunden: " + clientSocket.getInetAddress());
+
+                } catch (IOException e) {
+                    // Wenn Server gestoppt wurde, ist das normal
+                    if (running) {
+                        log("Fehler beim Akzeptieren: " + e.getMessage());
+                    }
+                }
+            }
+
+        } catch (IOException e) {
+            log("Server-Fehler: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * Sendet eine Nachricht an alle angemeldeten Clients (ausser dem Sender).
      * Nur Clients, die im Chat-Modus sind, erhalten die Nachricht.
      *
      * @param message Die zu sendende Nachricht
      * @param sender Der ClientHandler, der die Nachricht gesendet hat (wird ausgeschlossen)
      */
     public synchronized void broadcast(String message, ClientHandler sender) {
-        System.out.println("Broadcast: " + message);
+        log("Broadcast: " + message);
 
         // Liste für Clients, bei denen die Verbindung fehlgeschlagen ist
         List<ClientHandler> disconnectedClients = new ArrayList<>();
 
         // Durchlaufe alle verbundenen Clients
-        for (ClientHandler client : clients) {
-            // Nachricht nicht an den Sender zurückschicken
-            if (client == sender) continue;
+        synchronized (clients) {
+            for (ClientHandler client : clients) {
+                // Nachricht nicht an den Sender zurueckschicken
+                if (client == sender) continue;
 
-            // Nur an Clients senden, die bereit für Chat sind
-            if (!client.isReadyForChat()) continue;
+                // Nur an Clients senden, die bereit für Chat sind
+                if (!client.isReadyForChat()) continue;
 
-            try {
-                // Nachricht an Client senden
-                client.sendMessage(message);
-            } catch (IOException e) {
-                // Verbindung fehlgeschlagen, Client zur Löschliste hinzufügen
-                System.err.println("Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
-                disconnectedClients.add(client);
+                try {
+                    // Nachricht an Client senden
+                    client.sendMessage(message);
+                } catch (IOException e) {
+                    // Verbindung fehlgeschlagen, Client zur Loeschliste hinzufuegen
+                    log("Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
+                    disconnectedClients.add(client);
+                }
             }
-        }
 
-        // Getrennte Clients aus der Liste entfernen
-        clients.removeAll(disconnectedClients);
+            // Getrennte Clients aus der Liste entfernen
+            clients.removeAll(disconnectedClients);
+        }
+    }
+
+
+    /**
+     * Sendet eine Nachricht an ALLE verbundenen Clients (inkl. Sender).
+     * Wird verwendet für System-Nachrichten wie Raumlisten-Updates.
+     *
+     * @param message Die zu sendende Nachricht
+     */
+    public synchronized void broadcastToAll(String message) {
+        // Liste für Clients, bei denen die Verbindung fehlgeschlagen ist
+        List<ClientHandler> disconnectedClients = new ArrayList<>();
+
+        // Durchlaufe alle verbundenen Clients
+        synchronized (clients) {
+            for (ClientHandler client : clients) {
+                // Nur an Clients senden, die bereit für Chat sind
+                if (!client.isReadyForChat()) continue;
+
+                try {
+                    // Nachricht an Client senden
+                    client.sendMessage(message);
+                } catch (IOException e) {
+                    // Verbindung fehlgeschlagen, Client zur Loeschliste hinzufuegen
+                    log("Fehler beim Senden an " + client.getUsername() + ": " + e.getMessage());
+                    disconnectedClients.add(client);
+                }
+            }
+
+            // Getrennte Clients aus der Liste entfernen
+            clients.removeAll(disconnectedClients);
+        }
     }
 
 
@@ -119,27 +266,59 @@ public class Server {
      *
      * @param client Der zu entfernende ClientHandler
      */
-    public synchronized void removeClient(ClientHandler client) {
-        clients.remove(client);
-        System.out.println("Client entfernt: " + client.getUsername() + " (Gesamt: " + clients.size() + ")");
+    public void removeClient(ClientHandler client) {
+        // Client aus allen Räumen entfernen
+        roomManager.removeClientFromAllRooms(client);
+
+        synchronized (clients) {
+            clients.remove(client);
+        }
+        String username = client.getUsername();
+        log("Client entfernt: " + username + " (Gesamt: " + clients.size() + ")");
+
+        // GUI informieren
+        if (username != null) {
+            notifyUserLeft(username);
+        }
     }
 
 
     /**
-     * Gibt die Namen aller angemeldeten Benutzer zurück.
-     * Nur Clients, die im Chat-Modus sind, werden berücksichtigt.
+     * Entfernt einen Client anhand des Benutzernamens (für GUI "Nutzer entfernen").
+     *
+     * @param username Der Benutzername
+     * @return true wenn erfolgreich, sonst false
+     */
+    public boolean removeClientByUsername(String username) {
+        synchronized (clients) {
+            for (ClientHandler client : clients) {
+                if (username.equals(client.getUsername())) {
+                    client.disconnect("Du wurdest vom Server entfernt.");
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+
+    /**
+     * Gibt die Namen aller angemeldeten Benutzer zurueck.
+     * Nur Clients, die im Chat-Modus sind, werden beruecksichtigt.
      *
      * @return Liste mit allen Benutzernamen
      */
     public synchronized List<String> getConnectedUsernames() {
         List<String> usernames = new ArrayList<>();
 
-        for (ClientHandler client : clients) {
-            String username = client.getUsername();
+        synchronized (clients) {
+            for (ClientHandler client : clients) {
+                String username = client.getUsername();
 
-            // Nur authentifizierte Clients, die im Chat-Modus sind
-            if (username != null && client.isReadyForChat()) {
-                usernames.add(username);
+                // Nur authentifizierte Clients, die im Chat-Modus sind
+                if (username != null && client.isReadyForChat()) {
+                    usernames.add(username);
+                }
             }
         }
 
@@ -148,33 +327,66 @@ public class Server {
 
 
     /**
-     * Gibt die Anzahl der verbundenen Clients zurück.
+     * Gibt die Anzahl der verbundenen Clients zurueck.
      *
      * @return Anzahl der Clients
      */
-    public synchronized int getClientCount() {
-        return clients.size();
-    }
-
-
-    /**
-     * Stoppt den Server und schließt den ServerSocket.
-     */
-    public void stop() {
-        try {
-            running = false;
-            if (serverSocket != null) {
-                serverSocket.close();
-            }
-            System.out.println("Server gestoppt");
-        } catch (IOException e) {
-            System.err.println("Fehler beim Stoppen: " + e.getMessage());
+    public int getClientCount() {
+        synchronized (clients) {
+            return clients.size();
         }
     }
 
 
     /**
-     * Main-Methode zum Starten des Servers.
+     * Prueft ob der Server laeuft.
+     *
+     * @return true wenn Server laeuft
+     */
+    public boolean isRunning() {
+        return running;
+    }
+
+
+    /**
+     * Stoppt den Server und schliesst den ServerSocket.
+     */
+    public void stop() {
+        try {
+            running = false;
+
+            // Alle Clients trennen
+            synchronized (clients) {
+                for (ClientHandler client : clients) {
+                    try {
+                        client.disconnect("Server wird beendet.");
+                    } catch (Exception e) {
+                        // Ignorieren beim Herunterfahren
+                    }
+                }
+                clients.clear();
+            }
+
+            // ServerSocket schliessen
+            if (serverSocket != null && !serverSocket.isClosed()) {
+                serverSocket.close();
+            }
+
+            log("Server gestoppt");
+
+            // GUI leeren
+            if (gui != null) {
+                gui.clearAll();
+            }
+
+        } catch (IOException e) {
+            log("Fehler beim Stoppen: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * Main-Methode zum Starten des Servers (Konsolen-Modus).
      *
      * @param args Kommandozeilenargumente (nicht verwendet)
      */
