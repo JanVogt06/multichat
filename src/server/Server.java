@@ -361,6 +361,93 @@ public class Server {
 
 
     /**
+     * Sendet eine Warnnachricht an einen bestimmten Benutzer.
+     *
+     * @param username Der Benutzername
+     * @param message Die Warnungsnachricht
+     * @return true wenn erfolgreich gesendet
+     */
+    public boolean warnUser(String username, String message) {
+        synchronized (clients) {
+            for (ClientHandler client : clients) {
+                if (username.equals(client.getUsername())) {
+                    try {
+                        // Spezielle Warnnachricht senden
+                        client.sendMessage("WARNING:" + message);
+                        return true;
+                    } catch (IOException e) {
+                        log("Fehler beim Senden der Warnung: " + e.getMessage());
+                        return false;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+
+    /**
+     * Bannt einen Benutzer dauerhaft.
+     * Der Benutzer wird sofort getrennt und in der Datenbank als gebannt markiert.
+     *
+     * @param username Der Benutzername
+     * @return true wenn erfolgreich gebannt
+     */
+    public boolean banUser(String username) {
+        // In der Datenbank als gebannt markieren
+        boolean banned = userManager.banUser(username);
+
+        if (banned) {
+            // Falls online, sofort trennen
+            synchronized (clients) {
+                for (ClientHandler client : clients) {
+                    if (username.equals(client.getUsername())) {
+                        client.disconnect("Du wurdest permanent vom Server gebannt.");
+                        break;
+                    }
+                }
+            }
+        }
+
+        return banned;
+    }
+
+
+    /**
+     * Hebt den Bann eines Benutzers auf.
+     *
+     * @param username Der Benutzername
+     * @return true wenn erfolgreich entbannt
+     */
+    public boolean unbanUser(String username) {
+        return userManager.unbanUser(username);
+    }
+
+
+    /**
+     * Gibt eine Liste aller registrierten Benutzer zurück.
+     *
+     * @return Liste mit Benutzer-Informationen
+     */
+    public List<String> getRegisteredUsers() {
+        return userManager.getAllUsers();
+    }
+
+
+    /**
+     * Informiert die GUI über den Raumwechsel eines Nutzers.
+     *
+     * @param username Der Nutzername
+     * @param roomName Der Raumname (null wenn in keinem Raum)
+     */
+    public void notifyUserRoomChanged(String username, String roomName) {
+        if (gui != null) {
+            gui.updateUserRoom(username, roomName);
+        }
+    }
+
+
+    /**
      * Gibt die Namen aller angemeldeten Benutzer zurück.
      * Nur Clients, die im Chat-Modus sind, werden berücksichtigt.
      *

@@ -5,10 +5,13 @@ import javax.swing.border.TitledBorder;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Grafische Benutzeroberfläche für den Chat-Server.
- * Zeigt Server-Log, angemeldete Nutzer und Räume an.
+ * Zeigt Server-Log, angemeldete Nutzer (mit Raum) und Räume an.
  * Ermöglicht das Starten/Stoppen des Servers und Verwalten von Nutzern.
  */
 public class ServerGUI extends JFrame {
@@ -18,7 +21,7 @@ public class ServerGUI extends JFrame {
     // Textbereich für Server-Log (zeigt alle Aktivitäten)
     private JTextArea logTextArea;
 
-    // Liste der angemeldeten Nutzer
+    // Liste der angemeldeten Nutzer (zeigt "username [raum]")
     private JList<String> userList;
     private DefaultListModel<String> userListModel;
 
@@ -29,11 +32,20 @@ public class ServerGUI extends JFrame {
     // Buttons für Server-Steuerung
     private JButton startButton;
     private JButton stopButton;
-    private JButton removeUserButton;
+
+    // Buttons für Nutzerverwaltung
+    private JButton kickUserButton;
+    private JButton warnUserButton;
+    private JButton banUserButton;
+    private JButton showUsersButton;
 
     // ===== Server-Referenz =====
     private Server server;
     private Thread serverThread;
+
+    // ===== Nutzer-Raum-Zuordnung =====
+    // Speichert welcher Nutzer in welchem Raum ist
+    private final Map<String, String> userRoomMap = new HashMap<>();
 
 
     /**
@@ -43,7 +55,7 @@ public class ServerGUI extends JFrame {
         // Fenster-Grundeinstellungen
         setTitle("Chat-Server");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setSize(800, 600);
+        setSize(900, 650);
         setLocationRelativeTo(null); // Zentriert auf Bildschirm
 
         // Fenster-Schließen abfangen (Server sauber beenden)
@@ -97,6 +109,7 @@ public class ServerGUI extends JFrame {
      */
     private JPanel createLogPanel() {
         JPanel panel = new JPanel(new BorderLayout());
+        panel.setBorder(new TitledBorder("Server-Log"));
 
         // Textbereich für Log erstellen
         logTextArea = new JTextArea();
@@ -123,16 +136,21 @@ public class ServerGUI extends JFrame {
     private JPanel createRightPanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setPreferredSize(new Dimension(200, 0));
+        panel.setPreferredSize(new Dimension(220, 0));
 
         // ===== Nutzerliste =====
         userListModel = new DefaultListModel<>();
         userList = new JList<>(userListModel);
         userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        userList.setFont(new Font("SansSerif", Font.PLAIN, 12));
 
         JScrollPane userScrollPane = new JScrollPane(userList);
         userScrollPane.setBorder(new TitledBorder("Angemeldete Nutzer"));
-        userScrollPane.setPreferredSize(new Dimension(200, 200));
+        userScrollPane.setPreferredSize(new Dimension(200, 180));
+        userScrollPane.setMaximumSize(new Dimension(220, 200));
+
+        // ===== Nutzer-Buttons =====
+        JPanel userButtonPanel = createUserButtonPanel();
 
         // ===== Raumliste =====
         roomListModel = new DefaultListModel<>();
@@ -141,11 +159,14 @@ public class ServerGUI extends JFrame {
 
         JScrollPane roomScrollPane = new JScrollPane(roomList);
         roomScrollPane.setBorder(new TitledBorder("Räume"));
-        roomScrollPane.setPreferredSize(new Dimension(200, 200));
+        roomScrollPane.setPreferredSize(new Dimension(200, 150));
+        roomScrollPane.setMaximumSize(new Dimension(220, 180));
 
         // Zur Panel hinzufügen
         panel.add(userScrollPane);
-        panel.add(Box.createVerticalStrut(10)); // Abstand
+        panel.add(Box.createVerticalStrut(5));
+        panel.add(userButtonPanel);
+        panel.add(Box.createVerticalStrut(10));
         panel.add(roomScrollPane);
 
         return panel;
@@ -153,27 +174,68 @@ public class ServerGUI extends JFrame {
 
 
     /**
-     * Erstellt das untere Panel mit den Steuerungs-Buttons.
+     * Erstellt das Panel mit Buttons für die Nutzerverwaltung.
+     *
+     * @return JPanel mit Nutzer-Buttons
+     */
+    private JPanel createUserButtonPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setMaximumSize(new Dimension(220, 120));
+
+        // Buttons erstellen
+        kickUserButton = new JButton("Nutzer kicken");
+        warnUserButton = new JButton("Nutzer verwarnen");
+        banUserButton = new JButton("Nutzer bannen");
+
+        // Buttons gleich breit machen
+        Dimension buttonSize = new Dimension(200, 25);
+        kickUserButton.setMaximumSize(buttonSize);
+        warnUserButton.setMaximumSize(buttonSize);
+        banUserButton.setMaximumSize(buttonSize);
+
+        kickUserButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        warnUserButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+        banUserButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        // Action-Listener
+        kickUserButton.addActionListener(e -> handleKickUser());
+        warnUserButton.addActionListener(e -> handleWarnUser());
+        banUserButton.addActionListener(e -> handleBanUser());
+
+        // Zum Panel hinzufügen
+        panel.add(kickUserButton);
+        panel.add(Box.createVerticalStrut(3));
+        panel.add(warnUserButton);
+        panel.add(Box.createVerticalStrut(3));
+        panel.add(banUserButton);
+
+        return panel;
+    }
+
+
+    /**
+     * Erstellt das untere Panel mit den Server-Steuerungs-Buttons.
      *
      * @return JPanel mit Buttons
      */
     private JPanel createButtonPanel() {
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 10));
 
         // Buttons erstellen
         startButton = new JButton("Server starten");
         stopButton = new JButton("Server beenden");
-        removeUserButton = new JButton("Nutzer entfernen");
+        showUsersButton = new JButton("Registrierte Nutzer");
 
         // Action-Listener für Buttons
         startButton.addActionListener(e -> handleStartServer());
         stopButton.addActionListener(e -> handleStopServer());
-        removeUserButton.addActionListener(e -> handleRemoveUser());
+        showUsersButton.addActionListener(e -> handleShowRegisteredUsers());
 
         // Buttons zum Panel hinzufügen
         panel.add(startButton);
         panel.add(stopButton);
-        panel.add(removeUserButton);
+        panel.add(showUsersButton);
 
         return panel;
     }
@@ -187,7 +249,10 @@ public class ServerGUI extends JFrame {
     private void updateButtonStates(boolean serverRunning) {
         startButton.setEnabled(!serverRunning);
         stopButton.setEnabled(serverRunning);
-        removeUserButton.setEnabled(serverRunning);
+        kickUserButton.setEnabled(serverRunning);
+        warnUserButton.setEnabled(serverRunning);
+        banUserButton.setEnabled(serverRunning);
+        showUsersButton.setEnabled(serverRunning);
     }
 
 
@@ -224,16 +289,20 @@ public class ServerGUI extends JFrame {
             server = null;
         }
 
+        // Nutzer-Raum-Map leeren
+        userRoomMap.clear();
+
         // Buttons aktualisieren
         updateButtonStates(false);
     }
 
 
     /**
-     * Wird aufgerufen wenn "Nutzer entfernen" geklickt wird.
+     * Wird aufgerufen wenn "Nutzer kicken" geklickt wird.
+     * Entfernt den Nutzer vom Server (er kann sich wieder einloggen).
      */
-    private void handleRemoveUser() {
-        String selectedUser = userList.getSelectedValue();
+    private void handleKickUser() {
+        String selectedUser = getSelectedUsername();
 
         if (selectedUser == null) {
             JOptionPane.showMessageDialog(this,
@@ -245,20 +314,169 @@ public class ServerGUI extends JFrame {
 
         // Bestätigung anfordern
         int choice = JOptionPane.showConfirmDialog(this,
-                "Nutzer '" + selectedUser + "' wirklich entfernen?",
-                "Nutzer entfernen",
+                "Nutzer '" + selectedUser + "' wirklich kicken?\n\n" +
+                        "(Der Nutzer kann sich erneut einloggen)",
+                "Nutzer kicken",
                 JOptionPane.YES_NO_OPTION);
 
         if (choice == JOptionPane.YES_OPTION) {
             if (server != null) {
                 boolean removed = server.removeClientByUsername(selectedUser);
                 if (removed) {
-                    log("Nutzer entfernt: " + selectedUser);
+                    log("Nutzer gekickt: " + selectedUser);
                 } else {
-                    log("Fehler: Nutzer '" + selectedUser + "' konnte nicht entfernt werden");
+                    log("Fehler: Nutzer '" + selectedUser + "' konnte nicht gekickt werden");
                 }
             }
         }
+    }
+
+
+    /**
+     * Wird aufgerufen wenn "Nutzer verwarnen" geklickt wird.
+     * Sendet eine Warnnachricht an den ausgewählten Nutzer.
+     */
+    private void handleWarnUser() {
+        String selectedUser = getSelectedUsername();
+
+        if (selectedUser == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Bitte wähle einen Nutzer aus der Liste aus.",
+                    "Kein Nutzer ausgewählt",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Nachricht eingeben
+        String message = JOptionPane.showInputDialog(this,
+                "Warnungsnachricht für '" + selectedUser + "':",
+                "Nutzer verwarnen",
+                JOptionPane.WARNING_MESSAGE);
+
+        if (message != null && !message.trim().isEmpty()) {
+            if (server != null) {
+                boolean sent = server.warnUser(selectedUser, message.trim());
+                if (sent) {
+                    log("Warnung an " + selectedUser + " gesendet: " + message);
+                } else {
+                    log("Fehler: Warnung konnte nicht gesendet werden");
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Wird aufgerufen wenn "Nutzer bannen" geklickt wird.
+     * Sperrt den Nutzer dauerhaft (kann sich nicht mehr einloggen).
+     */
+    private void handleBanUser() {
+        String selectedUser = getSelectedUsername();
+
+        if (selectedUser == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Bitte wähle einen Nutzer aus der Liste aus.",
+                    "Kein Nutzer ausgewählt",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Bestätigung mit deutlicher Warnung
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Nutzer '" + selectedUser + "' wirklich PERMANENT bannen?\n\n" +
+                        "Der Nutzer wird sofort getrennt und kann sich\n" +
+                        "nicht mehr einloggen!",
+                "Nutzer bannen",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+        if (choice == JOptionPane.YES_OPTION) {
+            if (server != null) {
+                boolean banned = server.banUser(selectedUser);
+                if (banned) {
+                    log("Nutzer permanent gebannt: " + selectedUser);
+                } else {
+                    log("Fehler: Nutzer '" + selectedUser + "' konnte nicht gebannt werden");
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Wird aufgerufen wenn "Registrierte Nutzer" geklickt wird.
+     * Zeigt alle in der Datenbank registrierten Benutzer an.
+     */
+    private void handleShowRegisteredUsers() {
+        if (server == null) {
+            return;
+        }
+
+        // Alle Benutzer aus der Datenbank holen
+        List<String> users = server.getRegisteredUsers();
+
+        if (users.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "Keine registrierten Benutzer gefunden.",
+                    "Registrierte Benutzer",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        // Dialog mit Liste der Benutzer erstellen
+        JDialog dialog = new JDialog(this, "Registrierte Benutzer", true);
+        dialog.setSize(400, 300);
+        dialog.setLocationRelativeTo(this);
+
+        // Liste erstellen
+        DefaultListModel<String> listModel = new DefaultListModel<>();
+        for (String user : users) {
+            listModel.addElement(user);
+        }
+        JList<String> list = new JList<>(listModel);
+        list.setFont(new Font("Monospaced", Font.PLAIN, 12));
+
+        JScrollPane scrollPane = new JScrollPane(list);
+
+        // Entbannen-Button
+        JButton unbanButton = new JButton("Ausgewählten Nutzer entbannen");
+        unbanButton.addActionListener(e -> {
+            String selected = list.getSelectedValue();
+            if (selected != null && selected.contains("[GEBANNT]")) {
+                // Username extrahieren (vor dem ersten Leerzeichen)
+                String username = selected.split(" ")[0];
+                if (server.unbanUser(username)) {
+                    log("Nutzer entbannt: " + username);
+                    // Liste aktualisieren
+                    listModel.clear();
+                    for (String u : server.getRegisteredUsers()) {
+                        listModel.addElement(u);
+                    }
+                }
+            } else {
+                JOptionPane.showMessageDialog(dialog,
+                        "Bitte einen gebannten Nutzer auswählen.",
+                        "Hinweis",
+                        JOptionPane.INFORMATION_MESSAGE);
+            }
+        });
+
+        // Schließen-Button
+        JButton closeButton = new JButton("Schließen");
+        closeButton.addActionListener(e -> dialog.dispose());
+
+        // Button-Panel
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        buttonPanel.add(unbanButton);
+        buttonPanel.add(closeButton);
+
+        // Layout
+        dialog.setLayout(new BorderLayout(5, 5));
+        dialog.add(new JLabel("  " + users.size() + " registrierte Benutzer:"), BorderLayout.NORTH);
+        dialog.add(scrollPane, BorderLayout.CENTER);
+        dialog.add(buttonPanel, BorderLayout.SOUTH);
+
+        dialog.setVisible(true);
     }
 
 
@@ -278,6 +496,35 @@ public class ServerGUI extends JFrame {
             }
             dispose();
             System.exit(0);
+        }
+    }
+
+
+    // ===== HILFSMETHODEN =====
+
+    /**
+     * Extrahiert den Benutzernamen aus der Auswahl in der Nutzerliste.
+     * Die Liste zeigt "username [raum]", wir brauchen nur den Username.
+     *
+     * @return Der Benutzername oder null wenn nichts ausgewählt
+     */
+    private String getSelectedUsername() {
+        String selected = userList.getSelectedValue();
+        if (selected == null) {
+            return null;
+        }
+
+        // Format: "username [raum]" oder "username"
+        // Wir nehmen alles vor dem ersten Leerzeichen oder '['
+        int spaceIndex = selected.indexOf(' ');
+        int bracketIndex = selected.indexOf('[');
+
+        if (bracketIndex > 0) {
+            return selected.substring(0, bracketIndex).trim();
+        } else if (spaceIndex > 0) {
+            return selected.substring(0, spaceIndex);
+        } else {
+            return selected;
         }
     }
 
@@ -306,9 +553,13 @@ public class ServerGUI extends JFrame {
      */
     public void addUser(String username) {
         SwingUtilities.invokeLater(() -> {
-            if (!userListModel.contains(username)) {
-                userListModel.addElement(username);
+            // Prüfen ob User schon in der Liste ist
+            if (userRoomMap.containsKey(username)) {
+                return;
             }
+
+            userRoomMap.put(username, null); // Noch in keinem Raum
+            updateUserListDisplay();
         });
     }
 
@@ -320,8 +571,44 @@ public class ServerGUI extends JFrame {
      */
     public void removeUser(String username) {
         SwingUtilities.invokeLater(() -> {
-            userListModel.removeElement(username);
+            userRoomMap.remove(username);
+            updateUserListDisplay();
         });
+    }
+
+
+    /**
+     * Aktualisiert den Raum eines Nutzers.
+     *
+     * @param username Der Nutzername
+     * @param roomName Der Raumname (null wenn in keinem Raum)
+     */
+    public void updateUserRoom(String username, String roomName) {
+        SwingUtilities.invokeLater(() -> {
+            if (userRoomMap.containsKey(username)) {
+                userRoomMap.put(username, roomName);
+                updateUserListDisplay();
+            }
+        });
+    }
+
+
+    /**
+     * Aktualisiert die Anzeige der Nutzerliste.
+     * Zeigt jeden Nutzer im Format "username [raum]" an.
+     */
+    private void updateUserListDisplay() {
+        userListModel.clear();
+        for (Map.Entry<String, String> entry : userRoomMap.entrySet()) {
+            String username = entry.getKey();
+            String room = entry.getValue();
+
+            if (room != null && !room.isEmpty()) {
+                userListModel.addElement(username + " [" + room + "]");
+            } else {
+                userListModel.addElement(username);
+            }
+        }
     }
 
 
@@ -358,6 +645,7 @@ public class ServerGUI extends JFrame {
         SwingUtilities.invokeLater(() -> {
             userListModel.clear();
             roomListModel.clear();
+            userRoomMap.clear();
         });
     }
 

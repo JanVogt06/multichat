@@ -466,6 +466,17 @@ public class ClientGUI extends JFrame {
                 return;
             }
 
+            // Warnung vom Server (Admin hat Nutzer verwarnt)
+            if (message.startsWith("WARNING:")) {
+                String warning = message.substring(8);
+                JOptionPane.showMessageDialog(this,
+                        "WARNUNG VOM SERVER:\n\n" + warning,
+                        "Warnung vom Administrator",
+                        JOptionPane.WARNING_MESSAGE);
+                appendChat("*** WARNUNG: " + warning + " ***");
+                return;
+            }
+
             // Normale Chat-Nachricht
             appendChat(message);
         });

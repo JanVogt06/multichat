@@ -326,6 +326,9 @@ public class ClientHandler extends Thread {
             sendMessage("ROOM_CREATED:" + roomName);
             sendMessage("ROOM_JOINED:" + roomName);
 
+            // GUI über Raumwechsel informieren
+            server.notifyUserRoomChanged(username, roomName);
+
             // Raumliste an alle Clients senden
             broadcastRoomListToAll();
 
@@ -362,6 +365,9 @@ public class ClientHandler extends Thread {
 
         // Client informieren
         sendMessage("ROOM_JOINED:" + roomName);
+
+        // GUI über Raumwechsel informieren
+        server.notifyUserRoomChanged(username, roomName);
 
         // Chat-Historie senden
         Room room = roomManager.getRoom(roomName);
@@ -431,6 +437,9 @@ public class ClientHandler extends Thread {
         server.log(username + " hat Raum '" + currentRoom + "' verlassen");
 
         currentRoom = null;
+
+        // GUI über Raumwechsel informieren (null = kein Raum mehr)
+        server.notifyUserRoomChanged(username, null);
 
         // Nutzerliste im Raum aktualisieren (falls Raum noch existiert)
         if (!deleted) {
