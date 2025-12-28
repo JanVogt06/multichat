@@ -1,4 +1,7 @@
 .idea
 .vscode
 out
+
+# Datenbank und Logs nicht pushen
+users.db
 server.log

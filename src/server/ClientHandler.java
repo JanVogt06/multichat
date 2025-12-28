@@ -183,22 +183,29 @@ public class ClientHandler extends Thread {
      * @throws IOException bei Kommunikationsfehlern
      */
     private String handleLogin(String[] parts) throws IOException {
-        // Ueberpruefe, ob die Nachricht das richtige Format hat
+        // Überprüfe, ob die Nachricht das richtige Format hat
         if (parts.length != 3) {
-            sendResponse("ERROR", "Ungueltiges Format");
+            sendResponse("ERROR", "Ungültiges Format");
             return null;
         }
 
         String user = parts[1];
         String pass = parts[2];
 
-        // Ueberpruefe, ob Benutzer existiert
+        // Überprüfe, ob Benutzer existiert
         if (!userManager.userExists(user)) {
             sendResponse("ERROR", "Username nicht gefunden");
             return null;
         }
 
-        // Ueberpruefe Passwort
+        // Überprüfe, ob Benutzer gebannt ist
+        if (userManager.isUserBanned(user)) {
+            sendResponse("ERROR", "Dein Account wurde gesperrt");
+            server.log("Gebannter User '" + user + "' versuchte sich einzuloggen");
+            return null;
+        }
+
+        // Überprüfe Passwort
         if (!userManager.validatePassword(user, pass)) {
             sendResponse("ERROR", "Falsches Passwort");
             return null;
