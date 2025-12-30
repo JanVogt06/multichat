@@ -356,7 +356,12 @@ public class ClientHandler extends Thread {
 
         // Aktuellen Raum verlassen falls vorhanden
         if (currentRoom != null) {
-            leaveCurrentRoom();
+            boolean roomDeleted = leaveCurrentRoom();
+
+            // Wenn der alte Raum gelöscht wurde, alle Clients informieren
+            if (roomDeleted) {
+                broadcastRoomListToAll();
+            }
         }
 
         // Neuem Raum beitreten
