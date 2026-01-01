@@ -2,79 +2,60 @@ package client;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
-import java.awt.event.ActionEvent;
-import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.net.Socket;
 
 /**
- * Grafische Benutzeroberfläche für den Chat-Client.
- * Zeigt Chat-Nachrichten, Räume und Nutzer im aktuellen Raum an.
- * Ermöglicht das Senden von Nachrichten und die Raumverwaltung.
+ * Chat-Client mit grafischer Oberfläche.
+ * Kann Nachrichten senden/empfangen und Dateien hoch-/runterladen.
  */
 public class ClientGUI extends JFrame {
 
-    // ===== Verbindungskonstanten =====
     private static final String SERVER_HOST = "localhost";
     private static final int SERVER_PORT = 3143;
 
-    // ===== GUI-Komponenten =====
-
-    // Anzeige des aktuellen Raums
+    // GUI-Komponenten
     private JLabel currentRoomLabel;
-
-    // Chat-Bereich
     private JTextArea chatTextArea;
     private JTextField messageField;
     private JButton sendButton;
 
-    // Raumliste
     private JList<String> roomList;
     private DefaultListModel<String> roomListModel;
 
-    // Nutzerliste (im aktuellen Raum)
     private JList<String> userList;
     private DefaultListModel<String> userListModel;
 
-    // Raum-Buttons
     private JButton createRoomButton;
     private JButton joinRoomButton;
     private JButton leaveRoomButton;
 
-    // Datei-Buttons (für Meilenstein 3 vorbereitet)
     private JButton uploadFileButton;
     private JButton showFilesButton;
     private JButton downloadFileButton;
 
-    // ===== Netzwerk-Komponenten =====
+    // Netzwerk
     private Socket socket;
     private DataInputStream input;
     private DataOutputStream output;
     private Thread listenerThread;
     private volatile boolean connected = false;
 
-    // ===== Benutzer-Daten =====
+    // Benutzerdaten
     private String username;
     private String currentRoom;
 
 
-    /**
-     * Konstruktor - Erstellt die GUI.
-     * Wird erst nach erfolgreichem Login sichtbar gemacht.
-     */
     public ClientGUI() {
-        // Fenster-Grundeinstellungen
         setTitle("Chat-Client");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(900, 600);
         setLocationRelativeTo(null);
 
-        // Fenster-Schließen abfangen
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
@@ -82,63 +63,36 @@ public class ClientGUI extends JFrame {
             }
         });
 
-        // GUI-Komponenten erstellen
         initComponents();
-
-        // Anfangszustand: Nicht verbunden
         setConnectedState(false);
     }
 
 
-    /**
-     * Initialisiert alle GUI-Komponenten.
-     */
     private void initComponents() {
         setLayout(new BorderLayout(10, 10));
 
-        // ===== OBEN: Aktueller Raum =====
-        JPanel topPanel = createTopPanel();
+        add(createTopPanel(), BorderLayout.NORTH);
+        add(createCenterPanel(), BorderLayout.CENTER);
+        add(createRightPanel(), BorderLayout.EAST);
 
-        // ===== MITTE: Chat-Bereich =====
-        JPanel centerPanel = createCenterPanel();
-
-        // ===== RECHTS: Listen und Buttons =====
-        JPanel rightPanel = createRightPanel();
-
-        // Komponenten hinzufügen
-        add(topPanel, BorderLayout.NORTH);
-        add(centerPanel, BorderLayout.CENTER);
-        add(rightPanel, BorderLayout.EAST);
-
-        // Rand um das Fenster
         ((JPanel) getContentPane()).setBorder(
                 BorderFactory.createEmptyBorder(10, 10, 10, 10)
         );
     }
 
 
-    /**
-     * Erstellt das obere Panel mit der Raum-Anzeige.
-     */
     private JPanel createTopPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-
         currentRoomLabel = new JLabel("Aktueller Raum: (keiner)");
         currentRoomLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-
         panel.add(currentRoomLabel);
-
         return panel;
     }
 
 
-    /**
-     * Erstellt den mittleren Bereich mit Chat und Eingabefeld.
-     */
     private JPanel createCenterPanel() {
         JPanel panel = new JPanel(new BorderLayout(5, 5));
 
-        // Chat-Textbereich
         chatTextArea = new JTextArea();
         chatTextArea.setEditable(false);
         chatTextArea.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -148,13 +102,9 @@ public class ClientGUI extends JFrame {
         JScrollPane chatScrollPane = new JScrollPane(chatTextArea);
         chatScrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
 
-        // Eingabe-Panel (Textfeld + Button)
         JPanel inputPanel = new JPanel(new BorderLayout(5, 0));
-
         messageField = new JTextField();
         messageField.setFont(new Font("SansSerif", Font.PLAIN, 13));
-
-        // Enter-Taste zum Senden
         messageField.addActionListener(e -> sendMessage());
 
         sendButton = new JButton("Senden");
@@ -170,15 +120,12 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Erstellt das rechte Panel mit Listen und Buttons.
-     */
     private JPanel createRightPanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setPreferredSize(new Dimension(200, 0));
 
-        // ===== Raumliste =====
+        // Raumliste
         roomListModel = new DefaultListModel<>();
         roomList = new JList<>(roomListModel);
         roomList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -188,10 +135,7 @@ public class ClientGUI extends JFrame {
         roomScrollPane.setPreferredSize(new Dimension(180, 120));
         roomScrollPane.setMaximumSize(new Dimension(200, 150));
 
-        // ===== Raum-Buttons =====
-        JPanel roomButtonPanel = createRoomButtonPanel();
-
-        // ===== Nutzerliste =====
+        // Nutzerliste
         userListModel = new DefaultListModel<>();
         userList = new JList<>(userListModel);
         userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -201,25 +145,18 @@ public class ClientGUI extends JFrame {
         userScrollPane.setPreferredSize(new Dimension(180, 120));
         userScrollPane.setMaximumSize(new Dimension(200, 150));
 
-        // ===== Datei-Buttons (für Meilenstein 3) =====
-        JPanel fileButtonPanel = createFileButtonPanel();
-
-        // Alles zum Panel hinzufügen
         panel.add(roomScrollPane);
         panel.add(Box.createVerticalStrut(5));
-        panel.add(roomButtonPanel);
+        panel.add(createRoomButtonPanel());
         panel.add(Box.createVerticalStrut(10));
         panel.add(userScrollPane);
         panel.add(Box.createVerticalStrut(5));
-        panel.add(fileButtonPanel);
+        panel.add(createFileButtonPanel());
 
         return panel;
     }
 
 
-    /**
-     * Erstellt das Panel mit Raum-Buttons.
-     */
     private JPanel createRoomButtonPanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -229,7 +166,6 @@ public class ClientGUI extends JFrame {
         joinRoomButton = new JButton("Raum beitreten");
         leaveRoomButton = new JButton("Raum verlassen");
 
-        // Buttons gleich breit machen
         Dimension buttonSize = new Dimension(180, 25);
         createRoomButton.setMaximumSize(buttonSize);
         joinRoomButton.setMaximumSize(buttonSize);
@@ -239,7 +175,6 @@ public class ClientGUI extends JFrame {
         joinRoomButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         leaveRoomButton.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        // Action Listener
         createRoomButton.addActionListener(e -> handleCreateRoom());
         joinRoomButton.addActionListener(e -> handleJoinRoom());
         leaveRoomButton.addActionListener(e -> handleLeaveRoom());
@@ -254,9 +189,6 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Erstellt das Panel mit Datei-Buttons (für Meilenstein 3).
-     */
     private JPanel createFileButtonPanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -266,7 +198,6 @@ public class ClientGUI extends JFrame {
         showFilesButton = new JButton("Dateien anzeigen");
         downloadFileButton = new JButton("Datei herunterladen");
 
-        // Buttons gleich breit machen
         Dimension buttonSize = new Dimension(180, 25);
         uploadFileButton.setMaximumSize(buttonSize);
         showFilesButton.setMaximumSize(buttonSize);
@@ -276,15 +207,9 @@ public class ClientGUI extends JFrame {
         showFilesButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         downloadFileButton.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        // Deaktiviert für Meilenstein 2 (wird in Meilenstein 3 aktiviert)
-        uploadFileButton.setEnabled(false);
-        showFilesButton.setEnabled(false);
-        downloadFileButton.setEnabled(false);
-
-        // Tooltips
-        uploadFileButton.setToolTipText("Kommt in Meilenstein 3");
-        showFilesButton.setToolTipText("Kommt in Meilenstein 3");
-        downloadFileButton.setToolTipText("Kommt in Meilenstein 3");
+        uploadFileButton.addActionListener(e -> handleUploadFile());
+        showFilesButton.addActionListener(e -> handleShowFiles());
+        downloadFileButton.addActionListener(e -> handleDownloadFile());
 
         panel.add(uploadFileButton);
         panel.add(Box.createVerticalStrut(3));
@@ -296,18 +221,19 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Setzt den Verbindungszustand und aktualisiert die GUI entsprechend.
-     */
     private void setConnectedState(boolean isConnected) {
         this.connected = isConnected;
 
-        // Raum-Buttons aktivieren/deaktivieren
         createRoomButton.setEnabled(isConnected);
         joinRoomButton.setEnabled(isConnected);
         leaveRoomButton.setEnabled(isConnected);
 
-        // Nachrichtenfeld nur aktivieren wenn verbunden UND in einem Raum
+        // Datei-Buttons nur aktiv wenn in einem Raum
+        boolean canUseFiles = isConnected && (currentRoom != null);
+        uploadFileButton.setEnabled(canUseFiles);
+        showFilesButton.setEnabled(canUseFiles);
+        downloadFileButton.setEnabled(canUseFiles);
+
         boolean canChat = isConnected && (currentRoom != null);
         messageField.setEnabled(canChat);
         sendButton.setEnabled(canChat);
@@ -319,50 +245,40 @@ public class ClientGUI extends JFrame {
     }
 
 
-    // ===== NETZWERK-METHODEN =====
+    // ========================================================================
+    // NETZWERK
+    // ========================================================================
 
-    /**
-     * Verbindet zum Server und zeigt den Login-Dialog.
-     *
-     * @return true wenn Login erfolgreich
-     */
+
     public boolean connectAndLogin() {
         try {
-            // Verbindung zum Server herstellen
             socket = new Socket(SERVER_HOST, SERVER_PORT);
             input = new DataInputStream(socket.getInputStream());
             output = new DataOutputStream(socket.getOutputStream());
 
-            // Login-Dialog anzeigen
             LoginDialog loginDialog = new LoginDialog(this, input, output);
             loginDialog.setVisible(true);
 
-            // Prüfen ob Login erfolgreich war
             if (loginDialog.isLoginSuccessful()) {
                 this.username = loginDialog.getUsername();
                 setTitle("Chat-Client - " + username);
 
-                // Verbindung erfolgreich
                 connected = true;
                 setConnectedState(true);
 
-                // READY-Signal senden
                 output.writeUTF("READY");
                 output.flush();
 
-                // Listener-Thread für eingehende Nachrichten starten
                 startMessageListener();
-
                 return true;
             } else {
-                // Login abgebrochen
                 disconnect();
                 return false;
             }
 
         } catch (IOException e) {
             JOptionPane.showMessageDialog(this,
-                    "Verbindung zum Server fehlgeschlagen:\n" + e.getMessage(),
+                    "Verbindung fehlgeschlagen:\n" + e.getMessage(),
                     "Verbindungsfehler",
                     JOptionPane.ERROR_MESSAGE);
             return false;
@@ -371,14 +287,25 @@ public class ClientGUI extends JFrame {
 
 
     /**
-     * Startet den Thread zum Empfangen von Nachrichten.
+     * Startet einen Thread der ständig auf Nachrichten vom Server wartet.
      */
     private void startMessageListener() {
         listenerThread = new Thread(() -> {
             try {
                 while (connected) {
                     String message = input.readUTF();
-                    handleServerMessage(message);
+
+                    // WICHTIG: FILE_DATA muss HIER behandelt werden (im Listener-Thread),
+                    // weil die Binärdaten direkt danach kommen und sofort gelesen werden müssen.
+                    // Wenn wir das an invokeLater übergeben, liest der nächste readUTF()
+                    // die Binärdaten als Text - das geht schief!
+                    if (message.startsWith("FILE_DATA:")) {
+                        String fileName = message.substring(10);
+                        receiveFileDataNow(fileName);
+                    } else {
+                        // Alle anderen Nachrichten normal auf dem Swing-Thread verarbeiten
+                        handleServerMessage(message);
+                    }
                 }
             } catch (IOException e) {
                 if (connected) {
@@ -400,32 +327,28 @@ public class ClientGUI extends JFrame {
      */
     private void handleServerMessage(String message) {
         SwingUtilities.invokeLater(() -> {
-            // Prüfen auf spezielle Nachrichten
+            // Verbindung getrennt
             if (message.startsWith("DISCONNECT:")) {
-                String reason = message.substring(11);
-                appendChat("Vom Server getrennt: " + reason);
+                appendChat("Vom Server getrennt: " + message.substring(11));
                 setConnectedState(false);
                 return;
             }
 
-            // Raumliste empfangen
+            // Raumliste
             if (message.startsWith("ROOM_LIST:")) {
-                String roomData = message.substring(10);
-                updateRoomList(roomData);
+                updateRoomList(message.substring(10));
                 return;
             }
 
-            // Nutzerliste empfangen
+            // Nutzerliste
             if (message.startsWith("USER_LIST:")) {
-                String userData = message.substring(10);
-                updateUserList(userData);
+                updateUserList(message.substring(10));
                 return;
             }
 
             // Raum erstellt
             if (message.startsWith("ROOM_CREATED:")) {
-                String roomName = message.substring(13);
-                appendChat("Raum '" + roomName + "' wurde erstellt.");
+                appendChat("Raum '" + message.substring(13) + "' wurde erstellt.");
                 return;
             }
 
@@ -433,8 +356,6 @@ public class ClientGUI extends JFrame {
             if (message.startsWith("ROOM_JOINED:")) {
                 String roomName = message.substring(12);
                 setCurrentRoom(roomName);
-                appendChat("Du bist Raum '" + roomName + "' beigetreten.");
-                // Chat leeren beim Raumwechsel
                 chatTextArea.setText("");
                 appendChat("=== Raum: " + roomName + " ===");
                 return;
@@ -442,40 +363,67 @@ public class ClientGUI extends JFrame {
 
             // Raum verlassen
             if (message.startsWith("ROOM_LEFT:")) {
-                String roomName = message.substring(10);
                 setCurrentRoom(null);
-                appendChat("Du hast Raum '" + roomName + "' verlassen.");
+                appendChat("Du hast den Raum verlassen.");
                 clearUsers();
                 return;
             }
 
             // Raum gelöscht
             if (message.startsWith("ROOM_DELETED:")) {
-                String roomName = message.substring(13);
-                appendChat("Raum '" + roomName + "' wurde gelöscht.");
+                appendChat("Raum '" + message.substring(13) + "' wurde gelöscht.");
                 return;
             }
 
-            // Fehler vom Server
+            // Fehler
             if (message.startsWith("ERROR:")) {
-                String error = message.substring(6);
-                JOptionPane.showMessageDialog(this,
-                        error,
-                        "Fehler",
-                        JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(this, message.substring(6),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
-            // Warnung vom Server (Admin hat Nutzer verwarnt)
+            // Warnung vom Admin
             if (message.startsWith("WARNING:")) {
-                String warning = message.substring(8);
                 JOptionPane.showMessageDialog(this,
-                        "WARNUNG VOM SERVER:\n\n" + warning,
-                        "Warnung vom Administrator",
-                        JOptionPane.WARNING_MESSAGE);
-                appendChat("*** WARNUNG: " + warning + " ***");
+                        "WARNUNG VOM SERVER:\n\n" + message.substring(8),
+                        "Warnung", JOptionPane.WARNING_MESSAGE);
                 return;
             }
+
+            // ============================================================
+            // DATEI-ANTWORTEN
+            // ============================================================
+
+            // Upload fehlgeschlagen
+            if (message.startsWith("UPLOAD_ERROR:")) {
+                JOptionPane.showMessageDialog(this,
+                        "Upload fehlgeschlagen:\n" + message.substring(13),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            // Upload erfolgreich
+            if (message.startsWith("UPLOAD_SUCCESS:")) {
+                appendChat("Datei '" + message.substring(15) + "' hochgeladen.");
+                return;
+            }
+
+            // Dateiliste empfangen
+            if (message.startsWith("FILE_LIST:")) {
+                showFileListDialog(message.substring(10));
+                return;
+            }
+
+            // Download fehlgeschlagen
+            if (message.startsWith("DOWNLOAD_ERROR:")) {
+                JOptionPane.showMessageDialog(this,
+                        "Download fehlgeschlagen:\n" + message.substring(15),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            // FILE_DATA wird im Listener-Thread behandelt (siehe startMessageListener)
+            // weil die Binärdaten sofort gelesen werden müssen
 
             // Normale Chat-Nachricht
             appendChat(message);
@@ -483,14 +431,10 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Aktualisiert die Raumliste.
-     */
     private void updateRoomList(String roomData) {
         roomListModel.clear();
         if (!roomData.isEmpty()) {
-            String[] rooms = roomData.split(",");
-            for (String room : rooms) {
+            for (String room : roomData.split(",")) {
                 if (!room.trim().isEmpty()) {
                     roomListModel.addElement(room.trim());
                 }
@@ -499,14 +443,10 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Aktualisiert die Nutzerliste.
-     */
     private void updateUserList(String userData) {
         userListModel.clear();
         if (!userData.isEmpty()) {
-            String[] users = userData.split(",");
-            for (String user : users) {
+            for (String user : userData.split(",")) {
                 if (!user.trim().isEmpty()) {
                     userListModel.addElement(user.trim());
                 }
@@ -515,59 +455,41 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Sendet eine Nachricht an den Server.
-     */
     private void sendMessage() {
         String message = messageField.getText().trim();
-
-        if (message.isEmpty()) {
-            return;
-        }
+        if (message.isEmpty()) return;
 
         try {
-            // Nachricht senden
             output.writeUTF(message);
             output.flush();
-
-            // Eigene Nachricht im Chat anzeigen
             appendChat("[" + username + "] " + message);
-
-            // Eingabefeld leeren
             messageField.setText("");
-
         } catch (IOException e) {
             appendChat("Fehler beim Senden: " + e.getMessage());
         }
     }
 
 
-    /**
-     * Trennt die Verbindung zum Server.
-     */
     private void disconnect() {
         connected = false;
-
         try {
             if (input != null) input.close();
             if (output != null) output.close();
             if (socket != null) socket.close();
         } catch (IOException e) {
-            // Ignorieren beim Schließen
+            // Ignorieren
         }
     }
 
 
-    // ===== EVENT-HANDLER =====
+    // ========================================================================
+    // RAUM-FUNKTIONEN
+    // ========================================================================
 
-    /**
-     * Raum erstellen.
-     */
+
     private void handleCreateRoom() {
         String roomName = JOptionPane.showInputDialog(this,
-                "Raumname eingeben:",
-                "Neuen Raum erstellen",
-                JOptionPane.PLAIN_MESSAGE);
+                "Raumname eingeben:", "Neuen Raum erstellen", JOptionPane.PLAIN_MESSAGE);
 
         if (roomName != null && !roomName.trim().isEmpty()) {
             try {
@@ -580,26 +502,18 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Raum beitreten.
-     */
     private void handleJoinRoom() {
         String selectedRoom = roomList.getSelectedValue();
 
         if (selectedRoom == null) {
-            JOptionPane.showMessageDialog(this,
-                    "Bitte wähle einen Raum aus der Liste.",
-                    "Kein Raum ausgewählt",
-                    JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Bitte wähle einen Raum aus.",
+                    "Hinweis", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        // Prüfen ob schon im Raum
         if (selectedRoom.equals(currentRoom)) {
-            JOptionPane.showMessageDialog(this,
-                    "Du bist bereits in diesem Raum.",
-                    "Hinweis",
-                    JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Du bist bereits in diesem Raum.",
+                    "Hinweis", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
@@ -612,30 +526,19 @@ public class ClientGUI extends JFrame {
     }
 
 
-    /**
-     * Raum verlassen.
-     */
     private void handleLeaveRoom() {
         if (currentRoom == null) {
-            JOptionPane.showMessageDialog(this,
-                    "Du bist in keinem Raum.",
-                    "Fehler",
-                    JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Du bist in keinem Raum.",
+                    "Hinweis", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        // Bestätigung wenn letzter im Raum
-        int memberCount = userListModel.size();
-        if (memberCount <= 1) {
+        // Warnung wenn letzter im Raum
+        if (userListModel.size() <= 1) {
             int choice = JOptionPane.showConfirmDialog(this,
-                    "Du bist die letzte Person in diesem Raum.\nDas Verlassen wird den Raum löschen.\n\nFortfahren?",
-                    "Raum verlassen bestätigen",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.WARNING_MESSAGE);
-
-            if (choice != JOptionPane.YES_OPTION) {
-                return;
-            }
+                    "Du bist die letzte Person. Der Raum wird gelöscht.\nFortfahren?",
+                    "Raum verlassen", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.YES_OPTION) return;
         }
 
         try {
@@ -647,14 +550,284 @@ public class ClientGUI extends JFrame {
     }
 
 
+    // ========================================================================
+    // DATEI-FUNKTIONEN (Meilenstein 3)
+    // ========================================================================
+    //
+    // So funktioniert der Upload:
+    // 1. Benutzer wählt Datei aus (JFileChooser)
+    // 2. Wir schicken "UPLOAD_FILE:dateiname" an Server
+    // 3. Server antwortet "READY_FOR_UPLOAD"
+    // 4. Wir schicken: Dateigröße (4 Bytes) + alle Datei-Bytes
+    // 5. Server speichert und antwortet "UPLOAD_SUCCESS"
+    //
+    // So funktioniert der Download:
+    // 1. Wir schicken "DOWNLOAD_FILE:dateiname" an Server
+    // 2. Server antwortet "FILE_DATA:dateiname"
+    // 3. Server schickt: Dateigröße (4 Bytes) + alle Datei-Bytes
+    // 4. Wir zeigen Speichern-Dialog und schreiben die Bytes in eine Datei
+    // ========================================================================
+
+
     /**
-     * Fenster schließen.
+     * Öffnet Datei-Dialog und lädt die gewählte Datei hoch.
      */
+    private void handleUploadFile() {
+        if (currentRoom == null) {
+            JOptionPane.showMessageDialog(this, "Du musst zuerst einem Raum beitreten.",
+                    "Hinweis", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Datei auswählen
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Datei zum Hochladen auswählen");
+
+        // Nur PDF und Bilder erlauben
+        FileNameExtensionFilter filter = new FileNameExtensionFilter(
+                "PDF und Bilder (PDF, PNG, JPG, GIF)",
+                "pdf", "png", "jpg", "jpeg", "gif"
+        );
+        fileChooser.setFileFilter(filter);
+
+        int result = fileChooser.showOpenDialog(this);
+        if (result != JFileChooser.APPROVE_OPTION) return;
+
+        File selectedFile = fileChooser.getSelectedFile();
+
+        // Größe prüfen (max 10 MB)
+        if (selectedFile.length() > 10 * 1024 * 1024) {
+            JOptionPane.showMessageDialog(this, "Datei zu groß (max. 10 MB).",
+                    "Fehler", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        // Upload in separatem Thread (blockiert sonst die GUI)
+        new Thread(() -> uploadFile(selectedFile)).start();
+    }
+
+
+    /**
+     * Lädt eine Datei auf den Server.
+     *
+     * Ablauf:
+     * 1. Datei in byte-Array einlesen
+     * 2. "UPLOAD_FILE:name" senden
+     * 3. Kurz warten (Server bereitet sich vor)
+     * 4. Größe als int senden (4 Bytes)
+     * 5. Alle Datei-Bytes senden
+     */
+    private void uploadFile(File file) {
+        try {
+            // Datei komplett einlesen
+            byte[] fileData = new byte[(int) file.length()];
+            try (FileInputStream fis = new FileInputStream(file)) {
+                fis.read(fileData);
+            }
+
+            // synchronized: Nur ein Thread darf gleichzeitig senden
+            synchronized (output) {
+                // Befehl senden
+                output.writeUTF("UPLOAD_FILE:" + file.getName());
+                output.flush();
+
+                // Kurz warten bis Server bereit ist
+                Thread.sleep(100);
+
+                // Dateigröße senden (writeInt = 4 Bytes)
+                output.writeInt(fileData.length);
+
+                // Datei-Bytes senden
+                output.write(fileData);
+                output.flush();
+            }
+
+            SwingUtilities.invokeLater(() -> {
+                appendChat("Lade '" + file.getName() + "' hoch...");
+            });
+
+        } catch (IOException | InterruptedException e) {
+            SwingUtilities.invokeLater(() -> {
+                JOptionPane.showMessageDialog(this,
+                        "Fehler beim Hochladen: " + e.getMessage(),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
+            });
+        }
+    }
+
+
+    /**
+     * Fordert die Dateiliste vom Server an.
+     */
+    private void handleShowFiles() {
+        if (currentRoom == null) {
+            JOptionPane.showMessageDialog(this, "Du musst zuerst einem Raum beitreten.",
+                    "Hinweis", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try {
+            output.writeUTF("LIST_FILES");
+            output.flush();
+        } catch (IOException e) {
+            appendChat("Fehler: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * Zeigt die Dateiliste in einem Dialog an.
+     */
+    private void showFileListDialog(String fileData) {
+        if (fileData.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Keine Dateien im Raum.",
+                    "Dateien", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        String[] files = fileData.split(",");
+
+        // Dialog bauen
+        JDialog dialog = new JDialog(this, "Dateien in: " + currentRoom, true);
+        dialog.setSize(350, 300);
+        dialog.setLocationRelativeTo(this);
+
+        // Liste
+        DefaultListModel<String> listModel = new DefaultListModel<>();
+        for (String file : files) {
+            if (!file.trim().isEmpty()) {
+                listModel.addElement(file.trim());
+            }
+        }
+        JList<String> fileList = new JList<>(listModel);
+        fileList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        // Download-Button
+        JButton downloadBtn = new JButton("Herunterladen");
+        downloadBtn.addActionListener(e -> {
+            String selected = fileList.getSelectedValue();
+            if (selected != null) {
+                dialog.dispose();
+                downloadFileFromServer(selected);
+            }
+        });
+
+        // Schließen-Button
+        JButton closeBtn = new JButton("Schließen");
+        closeBtn.addActionListener(e -> dialog.dispose());
+
+        // Layout
+        JPanel buttonPanel = new JPanel(new FlowLayout());
+        buttonPanel.add(downloadBtn);
+        buttonPanel.add(closeBtn);
+
+        dialog.setLayout(new BorderLayout(5, 5));
+        dialog.add(new JLabel("  " + listModel.size() + " Datei(en):"), BorderLayout.NORTH);
+        dialog.add(new JScrollPane(fileList), BorderLayout.CENTER);
+        dialog.add(buttonPanel, BorderLayout.SOUTH);
+
+        dialog.setVisible(true);
+    }
+
+
+    /**
+     * Fragt nach Dateiname und lädt sie herunter.
+     */
+    private void handleDownloadFile() {
+        if (currentRoom == null) {
+            JOptionPane.showMessageDialog(this, "Du musst zuerst einem Raum beitreten.",
+                    "Hinweis", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String fileName = JOptionPane.showInputDialog(this,
+                "Dateiname eingeben:\n(Tipp: Erst 'Dateien anzeigen' klicken)",
+                "Datei herunterladen", JOptionPane.PLAIN_MESSAGE);
+
+        if (fileName != null && !fileName.trim().isEmpty()) {
+            downloadFileFromServer(fileName.trim());
+        }
+    }
+
+
+    /**
+     * Fordert eine Datei vom Server an.
+     */
+    private void downloadFileFromServer(String fileName) {
+        try {
+            output.writeUTF("DOWNLOAD_FILE:" + fileName);
+            output.flush();
+            appendChat("Lade '" + fileName + "' herunter...");
+        } catch (IOException e) {
+            appendChat("Fehler: " + e.getMessage());
+        }
+    }
+
+
+    /**
+     * Empfängt die Datei-Bytes vom Server und speichert sie.
+     *
+     * WICHTIG: Diese Methode wird direkt im Listener-Thread aufgerufen!
+     * Das muss so sein, weil die Binärdaten direkt nach "FILE_DATA:" kommen.
+     * Wenn wir in einen anderen Thread wechseln würden, liest der Listener-Thread
+     * die Binärdaten als nächste UTF-Nachricht - und das geht schief.
+     *
+     * Ablauf:
+     * 1. readInt() liest die Dateigröße (4 Bytes)
+     * 2. readFully() liest genau so viele Bytes
+     * 3. Speichern-Dialog zeigen (auf dem Swing-Thread)
+     * 4. Bytes in Datei schreiben
+     */
+    private void receiveFileDataNow(String fileName) {
+        try {
+            // Größe lesen (4 Bytes) - direkt im Listener-Thread!
+            int fileSize = input.readInt();
+
+            // Alle Bytes lesen - readFully wartet bis alles da ist
+            byte[] fileData = new byte[fileSize];
+            input.readFully(fileData);
+
+            // Jetzt sind alle Daten gelesen, der Stream ist wieder "sauber"
+            // Ab hier können wir auf den Swing-Thread wechseln für den Dialog
+            SwingUtilities.invokeLater(() -> {
+                JFileChooser fileChooser = new JFileChooser();
+                fileChooser.setDialogTitle("Datei speichern");
+                fileChooser.setSelectedFile(new File(fileName));
+
+                int result = fileChooser.showSaveDialog(this);
+                if (result == JFileChooser.APPROVE_OPTION) {
+                    File targetFile = fileChooser.getSelectedFile();
+                    try (FileOutputStream fos = new FileOutputStream(targetFile)) {
+                        fos.write(fileData);
+                        appendChat("Gespeichert: " + targetFile.getAbsolutePath());
+                    } catch (IOException e) {
+                        JOptionPane.showMessageDialog(this,
+                                "Fehler beim Speichern: " + e.getMessage(),
+                                "Fehler", JOptionPane.ERROR_MESSAGE);
+                    }
+                } else {
+                    appendChat("Download abgebrochen.");
+                }
+            });
+
+        } catch (Exception e) {
+            SwingUtilities.invokeLater(() -> {
+                JOptionPane.showMessageDialog(this,
+                        "Fehler beim Empfangen: " + e.getMessage(),
+                        "Fehler", JOptionPane.ERROR_MESSAGE);
+            });
+        }
+    }
+
+
+    // ========================================================================
+    // HILFSMETHODEN
+    // ========================================================================
+
+
     private void handleWindowClosing() {
         int choice = JOptionPane.showConfirmDialog(this,
-                "Chat wirklich beenden?",
-                "Beenden",
-                JOptionPane.YES_NO_OPTION);
+                "Chat beenden?", "Beenden", JOptionPane.YES_NO_OPTION);
 
         if (choice == JOptionPane.YES_OPTION) {
             disconnect();
@@ -664,90 +837,42 @@ public class ClientGUI extends JFrame {
     }
 
 
-    // ===== HILFSMETHODEN =====
-
-    /**
-     * Fügt eine Nachricht zum Chat hinzu.
-     */
     public void appendChat(String message) {
         chatTextArea.append(message + "\n");
-        // Automatisch nach unten scrollen
         chatTextArea.setCaretPosition(chatTextArea.getDocument().getLength());
     }
 
 
-    /**
-     * Setzt den aktuellen Raum und aktualisiert die GUI entsprechend.
-     */
     public void setCurrentRoom(String roomName) {
         this.currentRoom = roomName;
+
         if (roomName != null) {
             currentRoomLabel.setText("Aktueller Raum: " + roomName);
-            // Nachrichteneingabe aktivieren
             messageField.setEnabled(true);
             sendButton.setEnabled(true);
+            uploadFileButton.setEnabled(true);
+            showFilesButton.setEnabled(true);
+            downloadFileButton.setEnabled(true);
             messageField.requestFocus();
         } else {
             currentRoomLabel.setText("Aktueller Raum: (keiner)");
-            // Nachrichteneingabe deaktivieren
             messageField.setEnabled(false);
             sendButton.setEnabled(false);
+            uploadFileButton.setEnabled(false);
+            showFilesButton.setEnabled(false);
+            downloadFileButton.setEnabled(false);
         }
     }
 
 
-    /**
-     * Fügt einen Raum zur Liste hinzu.
-     */
-    public void addRoom(String roomName) {
-        if (!roomListModel.contains(roomName)) {
-            roomListModel.addElement(roomName);
-        }
-    }
-
-
-    /**
-     * Entfernt einen Raum aus der Liste.
-     */
-    public void removeRoom(String roomName) {
-        roomListModel.removeElement(roomName);
-    }
-
-
-    /**
-     * Fügt einen Nutzer zur Liste hinzu.
-     */
-    public void addUser(String username) {
-        if (!userListModel.contains(username)) {
-            userListModel.addElement(username);
-        }
-    }
-
-
-    /**
-     * Entfernt einen Nutzer aus der Liste.
-     */
-    public void removeUser(String username) {
-        userListModel.removeElement(username);
-    }
-
-
-    /**
-     * Leert die Nutzerliste.
-     */
     public void clearUsers() {
         userListModel.clear();
     }
 
 
-    /**
-     * Main-Methode - Startet die Client-GUI.
-     */
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             ClientGUI gui = new ClientGUI();
-
-            // Verbinden und einloggen
             if (gui.connectAndLogin()) {
                 gui.setVisible(true);
             } else {

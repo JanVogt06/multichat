@@ -1,5 +1,6 @@
 package server;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -7,43 +8,50 @@ import java.util.Map;
 
 /**
  * Verwaltet alle Chat-Räume auf dem Server.
- * Ermöglicht das Erstellen, Löschen und Finden von Räumen.
+ *
+ * Für jeden Raum wird ein Ordner erstellt, in dem Dateien gespeichert werden.
+ * Wenn ein Raum gelöscht wird, wird auch sein Ordner gelöscht.
  */
 public class RoomManager {
 
-    // Map: Raumname -> Room-Objekt
+    // Hier werden alle Raum-Ordner gespeichert
+    private static final String ROOMS_DIRECTORY = "room_files";
+
+    // Alle Räume: Name -> Room-Objekt
     private final Map<String, Room> rooms;
 
-    // Referenz zum Server für Benachrichtigungen
+    // Referenz zum Server
     private final Server server;
 
 
-    /**
-     * Konstruktor für den RoomManager.
-     *
-     * @param server Referenz zum Server
-     */
     public RoomManager(Server server) {
         this.rooms = new HashMap<>();
         this.server = server;
+
+        // Basis-Ordner erstellen falls nicht vorhanden
+        File baseDir = new File(ROOMS_DIRECTORY);
+        if (!baseDir.exists()) {
+            baseDir.mkdirs();
+        }
     }
 
 
     /**
-     * Erstellt einen neuen Raum.
-     *
-     * @param name Name des Raums
-     * @param creator Der Client, der den Raum erstellt
-     * @return true wenn erfolgreich, false wenn Name schon existiert
+     * Erstellt einen neuen Raum mit eigenem Datei-Ordner.
      */
     public synchronized boolean createRoom(String name, ClientHandler creator) {
-        // Prüfen ob Name schon existiert
+        // Name schon vergeben?
         if (rooms.containsKey(name)) {
             return false;
         }
 
-        // Prüfen ob Name gültig ist
+        // Name gültig?
         if (name == null || name.trim().isEmpty()) {
+            return false;
+        }
+
+        // Keine Sonderzeichen die Probleme im Dateisystem machen
+        if (name.contains("/") || name.contains("\\") || name.contains("..")) {
             return false;
         }
 
@@ -51,9 +59,14 @@ public class RoomManager {
         Room room = new Room(name, creator.getUsername());
         rooms.put(name, room);
 
-        server.log("Raum erstellt: " + name + " (von " + creator.getUsername() + ")");
+        // Ordner für Dateien erstellen: room_files/Raumname/
+        File roomDir = new File(ROOMS_DIRECTORY, name);
+        if (!roomDir.exists()) {
+            roomDir.mkdirs();
+            server.log("Ordner erstellt: " + roomDir.getPath());
+        }
 
-        // GUI benachrichtigen
+        server.log("Raum erstellt: " + name + " (von " + creator.getUsername() + ")");
         server.notifyRoomCreated(name);
 
         return true;
@@ -61,20 +74,21 @@ public class RoomManager {
 
 
     /**
-     * Löscht einen Raum.
-     *
-     * @param name Name des Raums
-     * @return true wenn erfolgreich gelöscht
+     * Löscht einen Raum und seinen Datei-Ordner.
      */
     public synchronized boolean deleteRoom(String name) {
         Room room = rooms.remove(name);
 
         if (room != null) {
+            // Ordner löschen (mit allen Dateien drin)
+            File roomDir = new File(ROOMS_DIRECTORY, name);
+            if (roomDir.exists()) {
+                deleteDirectoryRecursively(roomDir);
+                server.log("Ordner gelöscht: " + roomDir.getPath());
+            }
+
             server.log("Raum gelöscht: " + name);
-
-            // GUI benachrichtigen
             server.notifyRoomDeleted(name);
-
             return true;
         }
 
@@ -83,10 +97,59 @@ public class RoomManager {
 
 
     /**
-     * Findet einen Raum anhand des Namens.
+     * Löscht einen Ordner samt Inhalt.
      *
-     * @param name Name des Raums
-     * @return Room-Objekt oder null wenn nicht gefunden
+     * Geht rekursiv durch: Erst alle Dateien/Unterordner löschen,
+     * dann den Ordner selbst.
+     */
+    private void deleteDirectoryRecursively(File directory) {
+        if (directory.isDirectory()) {
+            File[] files = directory.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    deleteDirectoryRecursively(file);
+                }
+            }
+        }
+        directory.delete();
+    }
+
+
+    /**
+     * Gibt den Datei-Ordner eines Raums zurück.
+     */
+    public synchronized File getRoomDirectory(String roomName) {
+        if (!rooms.containsKey(roomName)) {
+            return null;
+        }
+        return new File(ROOMS_DIRECTORY, roomName);
+    }
+
+
+    /**
+     * Listet alle Dateien in einem Raum auf.
+     */
+    public synchronized List<String> getFilesInRoom(String roomName) {
+        List<String> fileNames = new ArrayList<>();
+
+        File roomDir = getRoomDirectory(roomName);
+        if (roomDir != null && roomDir.exists()) {
+            File[] files = roomDir.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.isFile()) {
+                        fileNames.add(file.getName());
+                    }
+                }
+            }
+        }
+
+        return fileNames;
+    }
+
+
+    /**
+     * Findet einen Raum anhand des Namens.
      */
     public synchronized Room getRoom(String name) {
         return rooms.get(name);
@@ -95,9 +158,6 @@ public class RoomManager {
 
     /**
      * Prüft ob ein Raum existiert.
-     *
-     * @param name Name des Raums
-     * @return true wenn Raum existiert
      */
     public synchronized boolean roomExists(String name) {
         return rooms.containsKey(name);
@@ -105,9 +165,7 @@ public class RoomManager {
 
 
     /**
-     * Gibt eine Liste aller Raumnamen zurück.
-     *
-     * @return Liste der Raumnamen
+     * Gibt alle Raumnamen zurück.
      */
     public synchronized List<String> getRoomNames() {
         return new ArrayList<>(rooms.keySet());
@@ -116,8 +174,6 @@ public class RoomManager {
 
     /**
      * Gibt die Anzahl der Räume zurück.
-     *
-     * @return Anzahl der Räume
      */
     public synchronized int getRoomCount() {
         return rooms.size();
@@ -126,10 +182,6 @@ public class RoomManager {
 
     /**
      * Lässt einen Client einem Raum beitreten.
-     *
-     * @param roomName Name des Raums
-     * @param client Der Client
-     * @return true wenn erfolgreich
      */
     public synchronized boolean joinRoom(String roomName, ClientHandler client) {
         Room room = rooms.get(roomName);
@@ -138,9 +190,7 @@ public class RoomManager {
             return false;
         }
 
-        // Client zum Raum hinzufügen
         room.addMember(client);
-
         server.log(client.getUsername() + " ist Raum '" + roomName + "' beigetreten");
 
         return true;
@@ -150,10 +200,6 @@ public class RoomManager {
     /**
      * Entfernt einen Client aus einem Raum.
      * Löscht den Raum wenn er danach leer ist.
-     *
-     * @param roomName Name des Raums
-     * @param client Der Client
-     * @return true wenn Raum danach gelöscht wurde
      */
     public synchronized boolean leaveRoom(String roomName, ClientHandler client) {
         Room room = rooms.get(roomName);
@@ -162,26 +208,21 @@ public class RoomManager {
             return false;
         }
 
-        // Client aus Raum entfernen
         room.removeMember(client);
-
         server.log(client.getUsername() + " hat Raum '" + roomName + "' verlassen");
 
-        // Raum löschen wenn leer
+        // Leerer Raum wird gelöscht
         if (room.isEmpty()) {
             deleteRoom(roomName);
-            return true; // Raum wurde gelöscht
+            return true;
         }
 
-        return false; // Raum existiert noch
+        return false;
     }
 
 
     /**
-     * Entfernt einen Client aus allen Räumen.
-     * Wird aufgerufen wenn ein Client die Verbindung trennt.
-     *
-     * @param client Der Client
+     * Entfernt einen Client aus allen Räumen (bei Disconnect).
      */
     public synchronized void removeClientFromAllRooms(ClientHandler client) {
         List<String> emptyRooms = new ArrayList<>();
@@ -191,11 +232,8 @@ public class RoomManager {
 
             if (room.hasMember(client)) {
                 room.removeMember(client);
-
-                // Andere Mitglieder benachrichtigen
                 room.broadcastToAll("<<< " + client.getUsername() + " hat den Raum verlassen");
 
-                // Merken wenn Raum leer ist
                 if (room.isEmpty()) {
                     emptyRooms.add(entry.getKey());
                 }
@@ -210,26 +248,19 @@ public class RoomManager {
 
 
     /**
-     * Gibt die Mitgliederliste eines Raums als String zurück.
-     *
-     * @param roomName Name des Raums
-     * @return Komma-separierte Liste der Mitglieder
+     * Gibt die Mitglieder eines Raums als komma-separierte Liste zurück.
      */
     public synchronized String getMemberListString(String roomName) {
         Room room = rooms.get(roomName);
-
         if (room == null) {
             return "";
         }
-
         return String.join(",", room.getMemberNames());
     }
 
 
     /**
-     * Gibt die Raumliste als String zurück.
-     *
-     * @return Komma-separierte Liste der Räume
+     * Gibt alle Räume als komma-separierte Liste zurück.
      */
     public synchronized String getRoomListString() {
         return String.join(",", rooms.keySet());
